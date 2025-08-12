@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr, linregress
+from scipy.stats import spearmanr, linregress, pearsonr
 from .correlation_analysis_helpers import dict_to_matrix
+import matplotlib.pyplot as plt
 
 def steady_state_calc(param_dict, interaction_matrix, gene_list,
                                    sim_data, scale_k=None):
@@ -133,22 +134,64 @@ def calculate_pairwise_gene_gene_correlation_matrix(simulation_at_t1, gene_list)
     correlation_matrix = dict_to_matrix(correlations, gene_list)
     return correlation_matrix
 
-def check_gene_gene_correlation_threshold(pairwise_gene_gene_correlation_matrix, 
+def get_scrambled_correlations(df, gene_i, gene_j, n=10_000, p_val=0.05, method="spearman", seed=101010):
+    """
+    Returns (null_corrs, abs_threshold) for the unordered pair {gene_i, gene_j}.
+    abs_threshold is the (1 - p_val) quantile of |null_corrs| (two-sided).
+    """
+    # Data prep
+    x = df[f"{gene_i}_mRNA"].to_numpy()
+    y = df[f"{gene_j}_mRNA"].to_numpy()
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    
+    # Choose correlation function
+    if method == "spearman":
+        corr_func = lambda a, b: spearmanr(a, b)[0]  # returns (correlation, p-value)
+    elif method == "pearson":
+        corr_func = lambda a, b: pearsonr(a, b)[0]
+    else:
+        raise ValueError("method must be 'spearman' or 'pearson'")
+
+    rng = np.random.default_rng(seed)
+    n_obs = x.size
+    null_corrs = np.empty(n, dtype=float)
+    
+    for k in range(n):
+        perm = rng.permutation(n_obs)
+        null_corrs[k] = corr_func(x, y[perm])
+
+    # threshold
+    thr = np.quantile(np.abs(null_corrs), 1.0 - p_val)
+    return null_corrs, thr
+
+def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
+                                          pairwise_gene_gene_correlation_matrix, 
                                           gene_list, 
-                                          threshold=0.04):
+                                          threshold=0.04,
+                                          use_scramble = True,
+                                          p_val_threshold = 0.01,
+                                          verbose=False):
     """
     Splits gene-gene pairs based on absolute correlation threshold.
 
     Parameters
     ----------
+    all_t1_t2_measurements : pd.DataFrame
+        The cell-gene dataframe containing sample information.
     pairwise_gene_gene_correlation_matrix : pd.DataFrame
         A square matrix of gene-gene correlations (gene × gene).
     gene_list : list of str
         List of gene names, must match the matrix row/column order.
     threshold : float, optional
         Correlation magnitude threshold to separate regulated vs unregulated.
+    use_scramble : bool, optional
+        If True, uses scrambled correlations for comparison.
+    p_val_threshold : float, optional
+        P-value threshold for significance testing.
     verbose : bool, optional
-        If True, prints gene pairs above the threshold.
+        If True, plots the null distribution and threshold for each gene pair.
+    
     Returns
     -------
     no_regulation : list of tuple
@@ -156,21 +199,41 @@ def check_gene_gene_correlation_threshold(pairwise_gene_gene_correlation_matrix,
 
     potential_regulation : list of tuple
         Gene pairs (i, j) where abs(correlation) > threshold.
+    
+    Note:
+    1. If both use_scrambled is True and threshold is provided, a new threshold is calculated 
+       based on the scrambled distribution and p_val_threshold.
     """
     no_regulation = []
     potential_regulation = []
-
     for i in range(len(gene_list)):
         for j in range(len(gene_list)):
-            if i == j:
+            if i >= j:
                 continue  # Skip diagonal
             corr_val = pairwise_gene_gene_correlation_matrix.values[i, j]
             pair = (gene_list[i], gene_list[j])
+            rev_pair = (gene_list[j], gene_list[i])
+            if use_scramble:
+                null_dist, threshold = get_scrambled_correlations(all_t1_t2_measurements, gene_list[i], gene_list[j], n=10_000, p_val=p_val_threshold)
+                p_value = np.mean(np.abs(null_dist) >= np.abs(corr_val))
+                if verbose:
+                    plt.figure(figsize=(6, 4))
+                    plt.hist(null_dist, bins=50, color="skyblue", alpha=0.7, edgecolor="k")
+                    plt.axvline(threshold, color="red", linestyle="--", label=f"+thr={threshold:.2e}")
+                    plt.axvline(-threshold, color="red", linestyle="--", label=f"-thr={threshold:.2e}")
+                    plt.axvline(corr_val, color="black", linestyle="-", label=f"actual={corr_val:.2e}")
+                    plt.title(f"Scrambled correlations: {gene_list[i]} vs {gene_list[j]}, p-val = {p_value:.2e}")
+                    plt.xlabel("Correlation")
+                    plt.ylabel("Count")
+                    plt.legend()
+                    plt.tight_layout()
+                    plt.show()
             if abs(corr_val) > threshold:
-                potential_regulation.append(pair)
+                    potential_regulation.append(pair)
+                    potential_regulation.append(rev_pair)
             else:
                 no_regulation.append(pair)
-
+                no_regulation.append(rev_pair)
     return no_regulation, potential_regulation
 
 def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):

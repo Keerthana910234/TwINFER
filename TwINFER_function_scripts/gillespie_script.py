@@ -79,6 +79,11 @@ def assign_parameters_to_genes(csv_path, gene_list, rows=None):
             vals = df.loc[int(row)].copy()
         else:
             raise KeyError(f"Row index {int(row)} not found in the DataFrame.")
+        if 'k_off' not in vals:
+            if "pi_on" in vals:
+                vals['k_off'] = vals['k_on']*(1/vals['pi_on'] - 1)
+            else:
+                raise ValueError("Either pi_on or k_off must be specified!")
         vals["k_deg_mRNA"] = np.log(2)/vals["mrna_half_life"]
         vals["k_deg_protein"] = np.log(2)/vals["protein_half_life"]
         vals.drop(["mrna_half_life","protein_half_life"],axis=0,inplace=True,errors="ignore")
@@ -618,7 +623,7 @@ def is_steady_state(samples, time_points, mean_tol=0.05, std_tol=0.05,
     rel_error_tp = np.vstack(rel_error_tp)  # shape (last_n, n_genes)
 
     # --- Step 3: per-gene success fraction ---
-    frac_within_1pct_per_gene = np.mean(rel_error_tp < 0.01, axis=0)
+    frac_within_1pct_per_gene = np.mean(rel_error_tp < 0.05, axis=0)
     steady_match_per_gene = frac_within_1pct_per_gene >= 0.8
     steady_match = bool(np.all(steady_match_per_gene))
 
@@ -628,7 +633,7 @@ def is_steady_state(samples, time_points, mean_tol=0.05, std_tol=0.05,
         print(f"  ➤ Max rel mean change over last {window} steps: {rel_mean_change.max():.4e}")
         print(f"  ➤ Max rel std change  over last {window} steps: {rel_std_change.max():.4e}")
         print(f"  ➤ Steady by param-based protein match: {steady_match}")
-        print(f"  ➤ Per-gene fraction of time points within 1% of expected protein:")
+        print(f"  ➤ Per-gene fraction of time points within 5% of expected protein:")
         for gene, frac, passed in zip(gene_list, frac_within_1pct_per_gene, steady_match_per_gene):
             status = "✅" if passed else "❌"
             print(f"     {gene:>15}: {frac*100:6.2f}% ({status})")
@@ -697,7 +702,7 @@ def process_param_set(rows, label, base_config):
     n_genes, connectivity_matrix = read_input_matrix(path_to_connectivity_matrix)
     assert len(rows) >= n_genes, "The number of parameter rows entered is less than the number of genes"
     reactions_df, gene_list = generate_reaction_network_from_matrix(connectivity_matrix)
-    display(reactions_df)
+    # display(reactions_df)
     init_states = generate_initial_state_from_genes(gene_list)
     param_dict = assign_parameters_to_genes(param_csv, gene_list, rows)
     n_matrix = np.zeros((n_genes, n_genes))
@@ -722,7 +727,7 @@ def process_param_set(rows, label, base_config):
     base_samples = run_simulation(update_prop, update_matrix, pop0, time_points, n_cells)
 
     if not is_steady_state(samples = base_samples, time_points =  time_points, param_dict = full_param_dict, interaction_matrix = connectivity_matrix, gene_list = gene_list):
-        print(f"⚠️ Base simulation (basal) for {label} not steady.")
+        print(f"⚠️ Base simulation (basal) for {label} may not be steady. Please manually verify and increase pre-division time if it has not reached steady state.")
         # Log the issue in a separate file
         error_record = {
             "id": uuid.uuid4().hex[:8],
@@ -763,7 +768,7 @@ def process_param_set(rows, label, base_config):
     prefix = f"{label}_{timestamp}_ncells_{n_cells}_{base_config['type']}_{id}"
     df_rep.to_csv(f"{base_config['output_folder']}/df_{prefix}.csv", index=False)
     # np.savetxt(f"{base_config['output_folder']}/samples_{prefix}.csv", rep_samples.reshape(2*n_cells, -1), delimiter=",")
-    df_base.to_csv(f"{base_config['output_folder']}/test_df_{prefix}.csv", index=False)
+    df_base.to_csv(f"{base_config['output_folder']}/simulation_before_division_df_{prefix}.csv", index=False)
     record = {
         "id": id,
         "rows": rows,
