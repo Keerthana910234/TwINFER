@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.stats import spearmanr, linregress, pearsonr
 from .correlation_analysis_helpers import dict_to_matrix
 import matplotlib.pyplot as plt
+from scipy.stats import rankdata
 
 def steady_state_calc(param_dict, interaction_matrix, gene_list,
                                    sim_data, scale_k=None):
@@ -165,6 +166,43 @@ def get_scrambled_correlations(df, gene_i, gene_j, n=10_000, p_val=0.05, method=
     thr = np.quantile(np.abs(null_corrs), 1.0 - p_val)
     return null_corrs, thr
 
+def get_correlations(correlation_dict, gene_i, gene_j):
+   return correlation_dict[tuple(sorted([gene_i, gene_j]))]
+
+def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
+   np.random.seed(random_state)
+   
+   rep_0 = simulation_data[simulation_data['replicate'] == 1].reset_index(drop=True)
+   rep_1 = simulation_data[simulation_data['replicate'] == 2].reset_index(drop=True)
+   gene_cols = [f"{gene}_mRNA" for gene in gene_list]
+   min_cells = min(len(rep_0), len(rep_1))
+   expr_0 = rep_0[gene_cols].iloc[:min_cells].values
+   expr_1 = rep_1[gene_cols].iloc[:min_cells].values
+
+   n_cells, n_genes = expr_0.shape
+   triu_indices = np.triu_indices(n_genes, k=1)
+   gene_pairs = [(gene_list[i], gene_list[j]) for i, j in zip(triu_indices[0], triu_indices[1])]
+   
+   all_shuffle_indices = np.array([np.random.permutation(n_cells) for _ in range(n_shuffles)])
+   all_correlations = np.zeros((n_shuffles, len(gene_pairs)))
+   
+   for batch_start in range(0, n_shuffles, 100):
+       batch_end = min(batch_start + 100, n_shuffles)
+       for i, shuffle_idx in enumerate(all_shuffle_indices[batch_start:batch_end]):
+           expr_1_shuffled = expr_1[shuffle_idx]
+           deltas = expr_0 - expr_1_shuffled
+           ranked_deltas = np.apply_along_axis(rankdata, 0, deltas)
+           corr_matrix = np.corrcoef(ranked_deltas.T)
+           all_correlations[batch_start + i] = corr_matrix[triu_indices]
+   
+   # Store with sorted keys to avoid duplicates
+   correlation_dict = {}
+   for i, (gene_i, gene_j) in enumerate(gene_pairs):
+       key = tuple(sorted([gene_i, gene_j]))
+       correlation_dict[key] = all_correlations[:, i]
+   
+   return correlation_dict
+
 def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
                                           pairwise_gene_gene_correlation_matrix, 
                                           gene_list, 
@@ -234,7 +272,7 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
             else:
                 no_regulation.append(pair)
                 no_regulation.append(rev_pair)
-    return no_regulation, potential_regulation
+    return no_regulation, potential_regulation, threshold
 
 def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
     """
@@ -262,10 +300,12 @@ def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
         Dictionary of Spearman correlation values keyed as "gene1-gene2".
         Each value corresponds to correlation of Δgene1 vs Δgene2.
     """
-    rep_0 = rep_0.sort_values("clone_id").reset_index(drop=True)
-    rep_1 = rep_1.sort_values("clone_id").reset_index(drop=True)
+    rep_0 = rep_0.reset_index(drop=True)
+    rep_1 = rep_1.reset_index(drop=True)
 
     if type_comparison == "twin":
+        rep_0 = rep_0.sort_values("clone_id").reset_index(drop=True)
+        rep_1 = rep_1.sort_values("clone_id").reset_index(drop=True)
         if not rep_0["clone_id"].equals(rep_1["clone_id"]):
             raise ValueError("After sorting, clone_ids in rep_0 and rep_1 do not match.")
 
@@ -318,12 +358,14 @@ def calculate_twin_random_pair_correlations(simulation_two_time, simulation_sing
 
     return twin_correlation_matrix, random_correlation_matrix
 
-def differentiate_single_state_reg_and_multiple_states(potential_regulation, twin_correlation_matrix, random_correlation_matrix, gene_list, threshold_ratio=25):
+def differentiate_single_state_reg_and_multiple_states(all_t1_t2_measurements, potential_regulation, twin_correlation_matrix, random_correlation_matrix, gene_list, z_score_threshold=10, verbose = True):
     """
     Separates potential regulatory gene pairs into multiple-state vs single-state regulation.
 
     Parameters
     ----------
+    all_t1_t2_measurements : pd.DataFrame
+        The cell-gene dataframe containing sample information.
     potential_regulation : list of tuple
         List of gene pairs (gene_i, gene_j) with potential regulation.
     twin_correlation_matrix : pd.DataFrame
@@ -332,7 +374,7 @@ def differentiate_single_state_reg_and_multiple_states(potential_regulation, twi
         Random pair correlation matrix at time t2.
     gene_list : list of str
         List of gene names (e.g., 'gene_1') in correct matrix order.
-    threshold_ratio : float, optional
+    z_score_threshold : float, optional
         Threshold for abs(random / twin) above which a pair is considered multi-state.
     Returns
     -------
@@ -340,17 +382,32 @@ def differentiate_single_state_reg_and_multiple_states(potential_regulation, twi
         Gene pairs with abs(random / twin) >= threshold_ratio.
 
     single_state_regulation : list of tuple
-        Gene pairs with abs(random / twin) < threshold_ratio.
+        Gene pairs with z-score between random pair correlations and twin pair correlation greater than 10.
     """
     multiple_states_gene_pairs = []
     single_state_regulation = []
 
+    random_pair_correlation_distribution = generate_random_shuffle(all_t1_t2_measurements, gene_list=gene_list)
     for gene_i, gene_j in potential_regulation:
         try:
             t_corr = twin_correlation_matrix.loc[gene_i, gene_j]
-            r_corr = random_correlation_matrix.loc[gene_i, gene_j]
-
-            if abs(r_corr / t_corr) >= threshold_ratio:
+            r_corr = get_correlations(random_pair_correlation_distribution, gene_i, gene_j)
+            r_corr_std = np.std(r_corr)
+            if r_corr_std == 0:
+                # All random correlations are identical (very rare)
+                print(f"Warning: Zero variance in random correlations for {gene_i}-{gene_j}")
+                single_state_regulation.append((gene_i, gene_j))
+                continue
+            z_score = (t_corr - np.mean(r_corr))/r_corr_std
+            if verbose:
+                plt.hist(r_corr)
+                plt.axvline(t_corr, linestyle = "--", c = "red", label = "Twin correlation at time t1")
+                plt.xlabel("Correlations")
+                plt.ylabel("Freuquency")
+                plt.title(f"Random pair correlations vs twin correlation at time t1. \n Z-score = {z_score}")
+                plt.show()
+                
+            if abs(z_score) >= z_score_threshold:
                 multiple_states_gene_pairs.append((gene_i, gene_j))
             else:
                 single_state_regulation.append((gene_i, gene_j))
@@ -405,7 +462,7 @@ def identify_reg_if_multiple_states(twin_correlation_matrix_t1, twin_correlation
         try:
             corr_t1 = twin_correlation_matrix_t1.loc[gene_i, gene_j]
             corr_t2 = twin_correlation_matrix_t2.loc[gene_i, gene_j]
-
+            print(f"Testing for multiple states. Correlation at time t1 = {corr_t1} and at time t2 = {corr_t2}")
             if corr_t1 == 0:
                 relative_change = np.inf if corr_t2 != 0 else 0
             else:

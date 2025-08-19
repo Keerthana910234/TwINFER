@@ -139,7 +139,7 @@ def get_param_data(param_df, param_index, n_genes):
     extra_terms = ["pair_id", "gene_id"]
 
     rows = [int(i) for i in param_index.split("_")]
-    assert len(rows) == n_genes, "Mismatch in number of input genes and parameter rows"
+    assert len(rows) == n_genes, f"Mismatch in number of input genes and parameter rows. \n Rows = {rows} and n_genes = {n_genes}"
 
     selected_rows = param_df.iloc[rows]
     param_dict = {}
