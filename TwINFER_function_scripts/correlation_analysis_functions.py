@@ -4,6 +4,9 @@ from scipy.stats import spearmanr, linregress, pearsonr
 from .correlation_analysis_helpers import dict_to_matrix
 import matplotlib.pyplot as plt
 from scipy.stats import rankdata
+from itertools import combinations, permutations
+import os
+from joblib import Parallel, delayed
 
 def steady_state_calc(param_dict, interaction_matrix, gene_list,
                                    sim_data, scale_k=None):
@@ -66,7 +69,7 @@ def steady_state_calc(param_dict, interaction_matrix, gene_list,
     return protein_levels_sim_data
 
 def check_system_in_steady_state(simulation_df, gene_params, interaction_matrix, gene_list,
-                                  relative_diff_threshold=0.05, relative_slope_threshold=0.01):
+                                  relative_diff_threshold=0.01, relative_slope_threshold=0.01):
     """
     Determines if each gene in the system has reached steady state based on empirical vs theoretical protein levels.
 
@@ -135,36 +138,37 @@ def calculate_pairwise_gene_gene_correlation_matrix(simulation_at_t1, gene_list)
     correlation_matrix = dict_to_matrix(correlations, gene_list)
     return correlation_matrix
 
-def get_scrambled_correlations(df, gene_i, gene_j, n=10_000, p_val=0.05, method="spearman", seed=101010):
-    """
-    Returns (null_corrs, abs_threshold) for the unordered pair {gene_i, gene_j}.
-    abs_threshold is the (1 - p_val) quantile of |null_corrs| (two-sided).
-    """
-    # Data prep
-    x = df[f"{gene_i}_mRNA"].to_numpy()
-    y = df[f"{gene_j}_mRNA"].to_numpy()
-    mask = np.isfinite(x) & np.isfinite(y)
-    x, y = x[mask], y[mask]
+# def get_scrambled_correlations(df, gene_i, gene_j, n=10_000, p_val=0.05, method="spearman", seed=101010):
+#     """
+#     Returns (null_corrs, abs_threshold) for the unordered pair {gene_i, gene_j}.
+#     abs_threshold is the (1 - p_val) quantile of |null_corrs| (two-sided).
+#     """
+#     # Data prep
+#     x = df[f"{gene_i}_mRNA"].to_numpy()
+#     y = df[f"{gene_j}_mRNA"].to_numpy()
+#     mask = np.isfinite(x) & np.isfinite(y)
+#     x, y = x[mask], y[mask]
     
-    # Choose correlation function
-    if method == "spearman":
-        corr_func = lambda a, b: spearmanr(a, b)[0]  # returns (correlation, p-value)
-    elif method == "pearson":
-        corr_func = lambda a, b: pearsonr(a, b)[0]
-    else:
-        raise ValueError("method must be 'spearman' or 'pearson'")
+#     # Choose correlation function
+#     if method == "spearman":
+#         corr_func = lambda a, b: spearmanr(a, b)[0]  # returns (correlation, p-value)
+#     elif method == "pearson":
+#         corr_func = lambda a, b: pearsonr(a, b)[0]
+#     else:
+#         raise ValueError("method must be 'spearman' or 'pearson'")
 
-    rng = np.random.default_rng(seed)
-    n_obs = x.size
-    null_corrs = np.empty(n, dtype=float)
+#     rng = np.random.default_rng(seed)
+#     n_obs = x.size
+#     null_corrs = np.empty(n, dtype=float)
     
-    for k in range(n):
-        perm = rng.permutation(n_obs)
-        null_corrs[k] = corr_func(x, y[perm])
+#     for k in range(n):
+#         perm = rng.permutation(n_obs)
+#         null_corrs[k] = corr_func(x, y[perm])
 
-    # threshold
-    thr = np.quantile(np.abs(null_corrs), 1.0 - p_val)
-    return null_corrs, thr
+#     # threshold
+#     thr = np.quantile(np.abs(null_corrs), 1.0 - p_val)
+#     return null_corrs, thr
+
 
 def get_correlations(correlation_dict, gene_i, gene_j):
    return correlation_dict[tuple(sorted([gene_i, gene_j]))]
@@ -203,76 +207,182 @@ def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random
    
    return correlation_dict
 
+# def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
+#                                           pairwise_gene_gene_correlation_matrix, 
+#                                           gene_list, 
+#                                           threshold=0.04,
+#                                           use_scramble = True,
+#                                           p_val_threshold = 0.01,
+#                                           verbose=False):
+#     """
+#     Splits gene-gene pairs based on absolute correlation threshold.
+
+#     Parameters
+#     ----------
+#     all_t1_t2_measurements : pd.DataFrame
+#         The cell-gene dataframe containing sample information.
+#     pairwise_gene_gene_correlation_matrix : pd.DataFrame
+#         A square matrix of gene-gene correlations (gene × gene).
+#     gene_list : list of str
+#         List of gene names, must match the matrix row/column order.
+#     threshold : float, optional
+#         Correlation magnitude threshold to separate regulated vs unregulated.
+#     use_scramble : bool, optional
+#         If True, uses scrambled correlations for comparison.
+#     p_val_threshold : float, optional
+#         P-value threshold for significance testing.
+#     verbose : bool, optional
+#         If True, plots the null distribution and threshold for each gene pair.
+    
+#     Returns
+#     -------
+#     no_regulation : list of tuple
+#         Gene pairs (i, j) where abs(correlation) ≤ threshold.
+
+#     potential_regulation : list of tuple
+#         Gene pairs (i, j) where abs(correlation) > threshold.
+    
+#     Note:
+#     1. If both use_scrambled is True and threshold is provided, a new threshold is calculated 
+#        based on the scrambled distribution and p_val_threshold.
+#     """
+#     no_regulation = []
+#     potential_regulation = []
+#     for i in range(len(gene_list)):
+#         for j in range(len(gene_list)):
+#             if i >= j:
+#                 continue  # Skip diagonal
+#             corr_val = pairwise_gene_gene_correlation_matrix.values[i, j]
+#             pair = (gene_list[i], gene_list[j])
+#             rev_pair = (gene_list[j], gene_list[i])
+#             if use_scramble:
+#                 # gene_i = 
+#                 # gene_j = = 
+#                 null_dist, threshold = get_scrambled_correlations(gene_i, gene_j, n=10_000, p_val=p_val_threshold)
+#                 p_value = np.mean(np.abs(null_dist) >= np.abs(corr_val))
+#                 if verbose:
+#                     plt.figure(figsize=(6, 4))
+#                     plt.hist(null_dist, bins=50, color="skyblue", alpha=0.7, edgecolor="k")
+#                     plt.axvline(threshold, color="red", linestyle="--", label=f"+thr={threshold:.2e}")
+#                     plt.axvline(-threshold, color="red", linestyle="--", label=f"-thr={threshold:.2e}")
+#                     plt.axvline(corr_val, color="black", linestyle="-", label=f"actual={corr_val:.2e}")
+#                     plt.title(f"Scrambled correlations: {gene_list[i]} vs {gene_list[j]}, p-val = {p_value:.2e}")
+#                     plt.xlabel("Correlation")
+#                     plt.ylabel("Count")
+#                     plt.legend()
+#                     plt.tight_layout()
+#                     plt.show()
+#             if abs(corr_val) > threshold:
+#                     potential_regulation.append(pair)
+#                     potential_regulation.append(rev_pair)
+#             else:
+#                 no_regulation.append(pair)
+#                 no_regulation.append(rev_pair)
+#     return no_regulation, potential_regulation, threshold
+
+def compute_correlation_matrix(gene_matrix_1, gene_matrix_2, gene_list, gene_pairs=None):
+   """Compute Spearman correlations between gene expression matrices."""
+   n_genes = len(gene_list)
+   gene_to_idx = {gene: i for i, gene in enumerate(gene_list)}
+   raw_matrix = np.zeros((n_genes, n_genes))
+   
+   # Determine which pairs to compute
+   if gene_pairs is None:
+       pairs_to_compute = [(i, j) for i in range(n_genes) for j in range(n_genes)]
+   else:
+       pairs_to_compute = []
+       for gene_1, gene_2 in gene_pairs:
+           if gene_1 in gene_to_idx and gene_2 in gene_to_idx:
+               i, j = gene_to_idx[gene_1], gene_to_idx[gene_2]
+               pairs_to_compute.append((i, j))
+   
+   # Compute correlations
+   for i, j in pairs_to_compute:
+       corr = spearmanr(gene_matrix_1[i, :], gene_matrix_2[j, :]).correlation
+       raw_matrix[i, j] = corr if not np.isnan(corr) else 0.0
+   
+   return pd.DataFrame(raw_matrix, index=gene_list, columns=gene_list)
+
+def single_cell_shuffle(gene_matrix_1, gene_matrix_2, gene_list, shuffle_pairs):
+            n_cells = gene_matrix_1.shape[1]
+            shuffled_indices = np.random.permutation(n_cells)
+            return compute_correlation_matrix(gene_matrix_1, gene_matrix_2[:, shuffled_indices], 
+                                                  gene_list, shuffle_pairs)
+
 def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
                                           pairwise_gene_gene_correlation_matrix, 
                                           gene_list, 
                                           threshold=0.04,
-                                          use_scramble = True,
-                                          p_val_threshold = 0.01,
+                                          use_scramble=True,
+                                          p_val_threshold=0.01,
+                                          n_shuffles=10000,
                                           verbose=False):
     """
     Splits gene-gene pairs based on absolute correlation threshold.
-
-    Parameters
-    ----------
-    all_t1_t2_measurements : pd.DataFrame
-        The cell-gene dataframe containing sample information.
-    pairwise_gene_gene_correlation_matrix : pd.DataFrame
-        A square matrix of gene-gene correlations (gene × gene).
-    gene_list : list of str
-        List of gene names, must match the matrix row/column order.
-    threshold : float, optional
-        Correlation magnitude threshold to separate regulated vs unregulated.
-    use_scramble : bool, optional
-        If True, uses scrambled correlations for comparison.
-    p_val_threshold : float, optional
-        P-value threshold for significance testing.
-    verbose : bool, optional
-        If True, plots the null distribution and threshold for each gene pair.
     
-    Returns
-    -------
-    no_regulation : list of tuple
-        Gene pairs (i, j) where abs(correlation) ≤ threshold.
-
-    potential_regulation : list of tuple
-        Gene pairs (i, j) where abs(correlation) > threshold.
-    
-    Note:
-    1. If both use_scrambled is True and threshold is provided, a new threshold is calculated 
-       based on the scrambled distribution and p_val_threshold.
+    Returns: no_regulation, potential_regulation, final_threshold
     """
-    no_regulation = []
-    potential_regulation = []
-    for i in range(len(gene_list)):
-        for j in range(len(gene_list)):
-            if i >= j:
-                continue  # Skip diagonal
-            corr_val = pairwise_gene_gene_correlation_matrix.values[i, j]
-            pair = (gene_list[i], gene_list[j])
-            rev_pair = (gene_list[j], gene_list[i])
-            if use_scramble:
-                null_dist, threshold = get_scrambled_correlations(all_t1_t2_measurements, gene_list[i], gene_list[j], n=10_000, p_val=p_val_threshold)
-                p_value = np.mean(np.abs(null_dist) >= np.abs(corr_val))
-                if verbose:
-                    plt.figure(figsize=(6, 4))
-                    plt.hist(null_dist, bins=50, color="skyblue", alpha=0.7, edgecolor="k")
-                    plt.axvline(threshold, color="red", linestyle="--", label=f"+thr={threshold:.2e}")
-                    plt.axvline(-threshold, color="red", linestyle="--", label=f"-thr={threshold:.2e}")
-                    plt.axvline(corr_val, color="black", linestyle="-", label=f"actual={corr_val:.2e}")
-                    plt.title(f"Scrambled correlations: {gene_list[i]} vs {gene_list[j]}, p-val = {p_value:.2e}")
-                    plt.xlabel("Correlation")
-                    plt.ylabel("Count")
-                    plt.legend()
-                    plt.tight_layout()
-                    plt.show()
-            if abs(corr_val) > threshold:
-                    potential_regulation.append(pair)
-                    potential_regulation.append(rev_pair)
-            else:
-                no_regulation.append(pair)
-                no_regulation.append(rev_pair)
-    return no_regulation, potential_regulation, threshold
+    
+    # Extract gene matrices from DataFrame
+    gene_matrix = []
+    
+    for gene in gene_list:
+        # Look for gene columns (adapt this to your column naming)
+        gene_col = f"{gene}_mRNA"  # Adjust this pattern as needed
+        if gene_col in all_t1_t2_measurements.columns:
+            # Split by time point or condition - adjust this logic for your data structure
+            gene_data = all_t1_t2_measurements[gene_col].values
+            gene_matrix.append(gene_data)
+        else:
+            raise ValueError(f"Could not find column for gene: {gene}")
+    
+    gene_matrix = np.array(gene_matrix)  # Shape: (n_genes, n_cells)
+    all_pairs = list(combinations(gene_list, 2))  # Unique undirected pairs
+    
+    pair_correlations = {(gi, gj): pairwise_gene_gene_correlation_matrix.loc[gi, gj] for gi, gj in all_pairs}
+    
+    if use_scramble:       
+        # Generate null distribution
+        
+        n_cores_to_use = max(1, os.cpu_count() - 2)
+        shuffled_results = Parallel(n_jobs=n_cores_to_use, verbose=0)(
+            delayed(single_cell_shuffle)(gene_matrix, gene_matrix, gene_list, all_pairs) 
+            for _ in range(n_shuffles)
+        )
+        
+        percentile_threshold = (1 - p_val_threshold) * 100
+
+    no_regulation, potential_regulation = [], []
+    
+    for gi, gj in all_pairs:
+        corr_val = pair_correlations[(gi, gj)]
+        current_threshold = threshold
+        
+        if use_scramble:
+            shuffled_vals = [r.loc[gi, gj]for r in shuffled_results]
+            
+            current_threshold = np.percentile(shuffled_vals, percentile_threshold)
+            
+            if verbose:
+                p_value = np.mean(np.array(shuffled_vals) >= abs(corr_val))
+                direction_str = "-"
+                plt.figure(figsize=(6, 4))
+                plt.hist(shuffled_vals, bins=50, color="skyblue", alpha=0.7, edgecolor="k")
+                plt.axvline(current_threshold, color="red", linestyle="--", label=f"threshold={current_threshold:.3f}")
+                plt.axvline(abs(corr_val), color="black", linestyle="-", label=f"actual={abs(corr_val):.3f}")
+                plt.title(f"Scrambled correlations: {gi} {direction_str} {gj}, p-val = {p_value:.3f}")
+                plt.xlabel("Correlation")
+                plt.ylabel("Count")
+                plt.legend()
+                plt.tight_layout()
+                plt.show()
+        
+        # Classify pairs
+        target_list = potential_regulation if abs(corr_val) > current_threshold else no_regulation
+        target_list.append((gi, gj))
+        target_list.append((gj, gi))
+    
+    return no_regulation, potential_regulation, current_threshold
 
 def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
     """
@@ -355,7 +465,6 @@ def calculate_twin_random_pair_correlations(simulation_two_time, simulation_sing
     random_rep_1_shuffled = random_rep_1.sample(frac=1, random_state=10100).reset_index(drop=True)
     random_correlation_dict = calculate_pair_correlation(random_rep_0, random_rep_1_shuffled, gene_list, type_comparison="random")
     random_correlation_matrix = dict_to_matrix(random_correlation_dict, gene_list)
-
     return twin_correlation_matrix, random_correlation_matrix
 
 def differentiate_single_state_reg_and_multiple_states(all_t1_t2_measurements, potential_regulation, twin_correlation_matrix, random_correlation_matrix, gene_list, z_score_threshold=10, verbose = True):
@@ -404,10 +513,12 @@ def differentiate_single_state_reg_and_multiple_states(all_t1_t2_measurements, p
                 plt.axvline(t_corr, linestyle = "--", c = "red", label = "Twin correlation at time t1")
                 plt.xlabel("Correlations")
                 plt.ylabel("Freuquency")
-                plt.title(f"Random pair correlations vs twin correlation at time t1. \n Z-score = {z_score}")
+                plt.title(f"Random pair correlations vs twin correlation at time t1 \
+                    \n between {gene_i} and {gene_j} \
+                    \n Z-score = {z_score}")
                 plt.show()
                 
-            if abs(z_score) >= z_score_threshold:
+            if abs(z_score) > abs(z_score_threshold):
                 multiple_states_gene_pairs.append((gene_i, gene_j))
             else:
                 single_state_regulation.append((gene_i, gene_j))
@@ -477,12 +588,10 @@ def identify_reg_if_multiple_states(twin_correlation_matrix_t1, twin_correlation
 
     return multiple_states_no_reg, multiple_states_and_reg
 
-def get_directions_from_simulation(rep_0_t1,
+def get_cross_correlations(rep_0_t1,
                                    rep_1_t2,
                                    gene_pairs,
-                                   type_comparison="twin",
-                                   threshold=None,
-                                   return_raw_and_normalized=True):
+                                   type_comparison="twin"):
     """
     Computes directional Spearman correlations between gene_1 (at t1) and gene_2 (at t2),
     and returns both raw and normalized directional matrices.
@@ -501,20 +610,13 @@ def get_directions_from_simulation(rep_0_t1,
     type_comparison : str, optional
         If "twin", checks that clone_ids are aligned. If "random", no check is performed.
 
-    threshold : float or None, optional
-        If set, raw correlations with absolute value below this threshold are set to 0.
-
-    return_raw_and_normalized : bool, optional
-        If True, returns both raw and normalized correlation matrices.
-        Otherwise, returns only normalized.
-
     Returns
     -------
     raw_matrix : pd.DataFrame
         Raw correlation matrix (gene_1 at t1 → gene_2 at t2).
 
     normalized_matrix : pd.DataFrame
-        Normalized correlation matrix, with 0s where raw matrix was thresholded.
+        Normalized correlation matrix.
     """
     gene_list = sorted(set(g for pair in gene_pairs for g in pair))
 
@@ -541,15 +643,6 @@ def get_directions_from_simulation(rep_0_t1,
         y = rep_1_t2[f"{gene_2}_mRNA"]
         corr = spearmanr(x, y).correlation
         raw_matrix.loc[gene_1, gene_2] = corr
-    pre_threshold_raw_matrix = raw_matrix
-
-    # Apply threshold to raw matrix
-    if threshold is not None:
-        for g1 in gene_list:
-            for g2 in gene_list:
-                val = raw_matrix.loc[g1, g2]
-                if pd.isna(val) or abs(val) < threshold:
-                    raw_matrix.loc[g1, g2] = 0.0
 
     # Compute normalized matrix
     normalized_matrix = pd.DataFrame(index=gene_list, columns=gene_list, dtype=float)
@@ -565,9 +658,89 @@ def get_directions_from_simulation(rep_0_t1,
                 norm_val = 0.0
             normalized_matrix.loc[g1, g2] = norm_val
 
-    if return_raw_and_normalized:
-        return raw_matrix, normalized_matrix, pre_threshold_raw_matrix
-    else:
-        return normalized_matrix
+    return raw_matrix, normalized_matrix
 
 
+def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000):
+    """
+    Identify directed edges that cross significance thresholds using shuffled null distribution.
+    
+    Parameters
+    ----------
+    gene_matrix_1, gene_matrix_2 : np.ndarray
+        Gene expression matrices (genes × cells)
+    direction_raw_matrix : pd.DataFrame
+        Actual correlation matrix between genes
+    gene_pairs : list of tuples
+        Gene pairs to analyze
+    threshold : float
+        P-value threshold (default 0.01)
+    n_shuffles : int
+        Number of shuffle iterations
+        
+    Returns
+    -------
+    list of tuples
+        Gene pairs that have significant directed correlations
+    """
+    
+    # Extract gene list from matrix
+    gene_matrix_t1 = []
+    gene_matrix_t2 = []
+
+    gene_list = list(direction_raw_matrix.index)
+    print(gene_list)
+    
+    for gene in gene_list:
+        # Look for gene columns
+        gene_col_t1 = f"{gene}_mRNA" if f"{gene}_mRNA" in rep_0_t1.columns else None
+        gene_col_t2 = f"{gene}_mRNA" if f"{gene}_mRNA" in rep_1_t2.columns else None
+        
+        if not gene_col_t1:
+            matching_cols = [col for col in rep_0_t1.columns if gene in col and 'mRNA' in col]
+            gene_col_t1 = matching_cols[0] if matching_cols else None
+            
+        if not gene_col_t2:
+            matching_cols = [col for col in rep_1_t2.columns if gene in col and 'mRNA' in col]
+            gene_col_t2 = matching_cols[0] if matching_cols else None
+        
+        if gene_col_t1 and gene_col_t2:
+            gene_matrix_t1.append(rep_0_t1[gene_col_t1].values)
+            gene_matrix_t2.append(rep_1_t2[gene_col_t2].values)
+        else:
+            print(f"    Warning: Could not find {gene} data")
+            return None
+    
+    gene_matrix_t1 = np.array(gene_matrix_t1)
+    gene_matrix_t2 = np.array(gene_matrix_t2)
+    
+    # Safe parallel processing
+    n_cores_to_use = max(1, os.cpu_count() - 2)
+    
+    # Get shuffled correlations using existing single_cell_shuffle function
+    shuffled_results = Parallel(n_jobs=n_cores_to_use, verbose=0)(
+        delayed(single_cell_shuffle)(gene_matrix_t1, gene_matrix_t2, gene_list, gene_pairs)
+        for _ in range(n_shuffles)
+    )
+    
+    # Identify significant directed edges
+    significant_edges = []
+    percentile_threshold = (1 - threshold) * 100
+    
+    for gene_1, gene_2 in gene_pairs:
+        # Get actual correlation
+        actual_corr = direction_raw_matrix.loc[gene_1, gene_2]
+        
+        # Get shuffled correlations for this pair
+        shuffled_vals = []
+        for result in shuffled_results:
+            shuffled_matrix = result
+            shuffled_vals.append(abs(shuffled_matrix.loc[gene_1, gene_2]))
+        
+        # Calculate threshold for this pair
+        pair_threshold = np.percentile(shuffled_vals, percentile_threshold)
+        
+        # Check if actual correlation crosses threshold
+        if abs(actual_corr) > pair_threshold:
+            significant_edges.append((gene_1, gene_2))    
+    return significant_edges
