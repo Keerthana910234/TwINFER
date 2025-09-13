@@ -15,7 +15,7 @@ import time
 import concurrent.futures
 import argparse
 import gc 
-
+import glob
 # %% Input utilities
 
 def read_input_matrix(path_to_matrix: str) -> (int, np.ndarray):
@@ -288,11 +288,79 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
             if connectivity_matrix[i,j]!=0:
                 key = f"{{k_{src}_to_{tgt}}}"
                 param_dict[key] = protein_levels[i]*scale_k[i,j]
-    print(param_dict)
+    return protein_levels, param_dict
+
+def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
+                                      target_hill=0.5, scale_k=None):
+    """
+    Calculate steady-state protein levels and assign rate constants (k values) 
+    for gene interactions based on the provided parameters and interaction 
+
+    Args:
+        param_dict (dict): Dictionary containing parameters for gene regulation, 
+            including burst probabilities, production rates, degradation rates, 
+            and interaction strengths.
+        connectivity_matrix (numpy.ndarray): Matrix representing gene interactions, 
+            where non-zero values indicate regulatory relationships and their signs 
+            (positive for activation, negative for repression).
+        gene_list (list): List of gene names corresponding to the rows and columns 
+            of the connectivity matrix.
+        target_hill (float, optional): Hill coefficient used to scale regulatory 
+            effects. Default is 0.5.
+        scale_k (numpy.ndarray, optional): Scaling matrix for rate constants. If 
+            None, defaults to a matrix of ones with the same dimensions as the 
+            interaction 
+    Returns:
+        tuple: A tuple containing:
+            - protein_levels (numpy.ndarray): Array of steady-state protein levels 
+              for each gene.
+            - param_dict (dict): Updated dictionary with assigned rate constants 
+              (k values) for gene intera
+    Notes:
+        - The function calculates steady-state protein levels based on burst 
+          probabilities and production/degradation rates.
+        - Regulatory effects are computed using the connectivity matrix and scaled 
+          by the target Hill coefficient (default is 0.5).
+        - Rate constants (k values) are assigned based on steady-state protein 
+          levels and multiplied by the scaling matrix.
+    """
+    n_genes = len(gene_list)
+    if scale_k is None:
+        scale_k = np.ones((n_genes, n_genes))
+    protein_levels = np.zeros(n_genes)
+    for i,gene in enumerate(gene_list):
+        k_on = param_dict[f'{{k_on_{gene}}}']
+        k_off = param_dict[f'{{k_off_{gene}}}']
+        k_prod_mRNA = param_dict[f'{{k_prod_mRNA_{gene}}}']
+        k_deg_mRNA  = param_dict[f'{{k_deg_mRNA_{gene}}}']
+        k_prod_prot = param_dict[f'{{k_prod_protein_{gene}}}']
+        k_deg_prot  = param_dict[f'{{k_deg_protein_{gene}}}']
+        regs = np.where(connectivity_matrix[:,i]!=0)[0]
+
+        reg_eff = 0.0
+        for r in regs:
+            edge = f"{gene_list[r]}_to_{gene}"
+            k_add = param_dict.get(f"{{k_add_{edge}}}", 0.0)
+            sign = connectivity_matrix[r,i]
+            reg_eff += target_hill * k_add * sign
+            # print(f"  {edge} — sign: {sign}, k_add: {k_add}")
+        
+        k_on_eff = k_on + reg_eff  # or replace k_on completely if no basal allowed
+        # print(gene, k_on, reg_eff)
+        burst_prob = k_on_eff/(k_on_eff+k_off)
+        m = k_prod_mRNA * burst_prob / k_deg_mRNA
+        protein_levels[i] = max(m * k_prod_prot / k_deg_prot, 0.1)
+    
+    # assign k values
+    for i, src in enumerate(gene_list):
+        for j, tgt in enumerate(gene_list):
+            if connectivity_matrix[i,j]!=0:
+                key = f"{{k_{src}_to_{tgt}}}"
+                param_dict[key] = protein_levels[i]*scale_k[i,j]
     return protein_levels, param_dict
 
 def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
-                          n_matrix=None, k_add_matrix=None):
+                          n_matrix=None, k_add_matrix=None, scale_k=None):
     """
     Adds interaction terms to the parameter dictionary based on the connectivity matrix 
     and gene list, and calculates steady-state paramet
@@ -322,7 +390,7 @@ def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                 param_dict[f"{{n_{edge}}}"]     = float(n_matrix[i,j])
                 param_dict[f"{{k_add_{edge}}}"] = float(k_add_matrix[i,j])
     # print(f"param_dict before steady state calc: {param_dict}")
-    return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list)
+    return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
 
 def setup_gillespie_params_from_reactions(init_states: pd.DataFrame,
                                           reactions: pd.DataFrame,
@@ -688,8 +756,6 @@ def process_param_set(rows, label, base_config):
         AssertionError: If the number of parameter rows is less than the number of genes.
     """
     # base_config contains common parameters: paths, k_add_matrix, n_matrix, time_points
-    # set_num_threads(6)
-    print(f"[Worker {label}] Using {get_num_threads()} threads for rows={rows}\n")
     # Unpack base_config
     path_to_connectivity_matrix = base_config['path_to_connectivity_matrix']
     param_csv      = base_config['param_csv']
@@ -698,6 +764,7 @@ def process_param_set(rows, label, base_config):
     time_points    = np.arange(0, base_config['simulation_time_before_division'], 1)
     sample_twins_time_points    = np.arange(0, base_config['twin_simulation_time_after_division'] + base_config['twin_measurement_resolution'], base_config['twin_measurement_resolution']) 
     n_cells        = base_config['n_cells']
+    scale_k = base_config.get("scale_k", None)
     # Build reactions and parameters for this row set
     n_genes, connectivity_matrix = read_input_matrix(path_to_connectivity_matrix)
     assert len(rows) >= n_genes, "The number of parameter rows entered is less than the number of genes"
@@ -709,7 +776,7 @@ def process_param_set(rows, label, base_config):
     k_add_matrix = np.zeros((n_genes, n_genes))
     for i in range(n_genes):
         for j in range(n_genes):
-            #Check in the connectivity matrix if the edge is a regulation ot not
+            #Check in the connectivity matrix if the edge is a regulation or not
             if connectivity_matrix[i, j] != 0:
                 edge = f"{gene_list[i]}_to_{gene_list[j]}"
                 n_matrix[i,j]     = param_dict.get(f"{{n_{edge}}}", 2.0)
@@ -717,7 +784,7 @@ def process_param_set(rows, label, base_config):
     print("Done until addition of interaction terms")
     steady_state, full_param_dict = add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                                                           n_matrix=n_matrix,
-                                                          k_add_matrix=k_add_matrix)
+                                                          k_add_matrix=k_add_matrix, scale_k=scale_k)
     print(full_param_dict)
 
     pop0, update_matrix, update_prop, species_index = setup_gillespie_params_from_reactions(
@@ -786,10 +853,23 @@ def process_param_set(rows, label, base_config):
     return f"{base_config['output_folder']}/df_{prefix}.csv"
 
 #%%
+def check_if_file_exists(rows, output_folder, type_name):
+    """
+    Check if a file for the given parameter set already exists
+    """
+    # Create the pattern that matches your existing filename format
+    row_pattern = "_".join(map(str, rows))
+    pattern = f"{output_folder}/df_row_{row_pattern}_*_{type_name}_*.csv"
+    
+    # Check if any files match this pattern
+    existing_files = glob.glob(pattern)
+    
+    if existing_files:
+        return True
+    return False
+#%%
 # --- Main execution with parallel parameter sets ---
 if __name__ == "__main__":
-    set_num_threads(12)
-    print("Threads Numba will use:", get_num_threads())
     root = "/projects/b1042/GoyalLab/Keerthana/"
     # Base configuration - the commented out lines can be used instead of providing arguments to the file (e.g. if using it as ipynb notebook)
     base_config = {
@@ -804,14 +884,11 @@ if __name__ == "__main__":
         
     }
 
-    import numpy as np
-    root = "/projects/b1042/GoyalLab/Keerthana/grnInference/"
-
     # base_config = {
     #     'n_cells': 1000, #Number of cells before division (number of twin pairs)
     #     'simulation_time_before_division': 1000, #The time used to run the initial cells before division. User must set this time to ensure the population reaches steady state [hours]
     #     'twin_simulation_time_after_division': 48, #The time twin cells are simulated after division and measurements are stored in the output[hours]
-    #     'twin_measurement_resolution': 1, #The time between each measurement of twin cells [hours]. For example, if twin_sampling_duration is 12 and twin_measurement_resolution is 1, the final dataframe will contain hourly measurements for 12 hours (0 is birth).
+    #     'twin_measurement_resolution': 1, #The time between each measurement of twin cells [hours]. For example, if twin_simulation_time_after_division is 12 and twin_measurement_resolution is 1, the final dataframe will contain hourly measurements for 12 hours (0 is birth).
     #     "path_to_connectivity_matrix": f"{root}/simulation_data/median_parameter_simulations/simulation_details/interaction_matrix_A_to_B_A_to_C.txt", #path to the connectivity matrix specifying the GRN to simulate
     #     "param_csv": f"{root}/simulation_data/median_parameter_simulations/simulation_details/median_param_3_gene.csv", #Path to the parameters for all genes and interaction terms
     #     "rows_to_use": [[0, 1, 2]], #Rows in the parameter's csv file for each gene - the length should be equal to number of genes in the system
@@ -828,31 +905,39 @@ if __name__ == "__main__":
     parser.add_argument("--path_to_connectivity_matrix", type=str, required=True, help="Path to the connectivity matrix file specifying the GRN to simulate.")
     parser.add_argument("--param_csv", type=str, required=True, help="Path to the parameters for all genes and interaction terms.")
     parser.add_argument("--row_to_start", type=int, required=True, help="Row of parameter file to start for this batch of simulations.")
+    parser.add_argument("--row_to_end", type=int, required=False, default = None, help="Row of parameter file to end for this batch of simulations.")
     parser.add_argument("--output_folder", type=str , required=True, help="Path to output folder to store simulation.")
     parser.add_argument("--log_file", type=str , required=True, help="Json file to save log.")
     parser.add_argument("--type", type=str , required=True, help="Name of the network used -- will be in the filename.")
     parser.add_argument("--number_parallel_processes", type=int, default=1, required=False, help="Number of parallel parameter sets to be run at once (default: 1).")
+    parser.add_argument("--number_of_cores_per_parameter", type=int, default=4, required=False, help="Number of cores to be used per parameter (default: 4).")
     parser.add_argument("--n_genes", type=int, default=2, required=False, help="Number of genes in the system (default: 2).")
     parser.add_argument("--n_cells", type=int, default=5000, required=False, help="Number of cells in the system (default: 5000).")
-    parser.add_argument("--steady_state_time", type=int, default=2500, required=False, help="Number of hours to run to achieve steady state (default: 250h0).")
-    parser.add_argument("--twin_sampling_duration", type=int, default=48, required=False, help="Number of hours to run after cell division for collecting twin data (default: 48h).")
-    parser.add_argument("--twin_sampling_frequency", type=int, default=1, required=False, help="The time duration between every twin measurement (default: 1). For example, if it is 1h, then, data is stored eevry hour.")
+    parser.add_argument("--simulation_time_before_division", type=int, default=2500, required=False, help="Number of hours to run to achieve steady state (default: 250h0).")
+    parser.add_argument("--twin_simulation_time_after_division", type=int, default=48, required=False, help="Number of hours to run after cell division for collecting twin data (default: 48h).")
+    parser.add_argument("--twin_measurement_resolution", type=int, default=1, required=False, help="The time duration between every twin measurement (default: 1). For example, if it is 1h, then, data is stored eevry hour.")
+    parser.add_argument("--scale_k", type=str, default=None, required=False, help="The matrix of values to scale Hill constant K for each interaction. "
+                        "Provide as string representation of nested list, e.g., '[[0,1],[0,0]]'. "
+                        "Default is matrix of 1s for all interactions.")    
+    
     args = parser.parse_args()
 
     # # Update base configuration with parsed arguments
-    base_config["path_to_connectivity_matrix"] = args.matrix_path
+    base_config["path_to_connectivity_matrix"] = args.path_to_connectivity_matrix
     base_config["param_csv"] = args.param_csv
     base_config["row_to_start"] = int(args.row_to_start)
+    base_config["row_to_end"] = int(args.row_to_end)
     base_config["output_folder"] = args.output_folder
     base_config["log_file"] = args.log_file
     base_config["type"] = args.type
     base_config["number_parallel_processes"] = args.number_parallel_processes
     base_config["n_genes"] = args.n_genes
     base_config["n_cells"] = args.n_cells
-    base_config["steady_state_time"] = args.steady_state_time
-    base_config["twin_sampling_duration"] = args.twin_sampling_duration
-    base_config["twin_sampling_frequency"] = args.twin_sampling_frequency
-
+    base_config["number_of_cores_per_parameter"] = args.number_of_cores_per_parameter
+    base_config["simulation_time_before_division"] = args.simulation_time_before_division
+    base_config["twin_simulation_time_after_division"] = args.twin_simulation_time_after_division
+    base_config["twin_measurement_resolution"] = args.twin_measurement_resolution
+    base_config['scale_k'] = args.scale_k
     os.makedirs(base_config["output_folder"], exist_ok = True)
     try:
         df = pd.read_csv(base_config['param_csv'])
@@ -865,12 +950,32 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         raise
-
+    
     # Read the connectivity matrix before using it
     path_to_connectivity_matrix = base_config["path_to_connectivity_matrix"]
     n_genes, mat = read_input_matrix(path_to_connectivity_matrix)  # Ensure mat is defined
+    
+    if args.scale_k is not None:
+        try:
+            # Parse the string representation into nested list, then convert to numpy array
+            parsed_matrix = ast.literal_eval(args.scale_k)
+            base_config["scale_k"] = np.array(parsed_matrix)
+            print(f"Using provided scale_k matrix: {base_config['scale_k']}")
+        except (ValueError, SyntaxError) as e:
+            print(f"Error parsing scale_k matrix: {e}")
+            print("Expected format: '[[0,1],[0,0]]' (include the quotes)")
+            raise
+        except Exception as e:
+            print(f"Error converting to numpy array: {e}")
+            raise
+        expected_shape = (base_config["n_genes"], base_config["n_genes"])
+        
+        if base_config["scale_k"].shape != expected_shape:
+            print(f"Warning: scale_k matrix shape {base_config['scale_k'].shape} doesn't match expected {expected_shape}")
+    
+    
     start_pair = base_config["row_to_start"]  # row_to_start now refers to pair_id
-    end_pair = start_pair + 650
+    end_pair = base_config["row_to_end"]
     print(f"start_pair: {start_pair}, end_pair: {end_pair}")
     row_list = []
     labels = []
@@ -882,15 +987,42 @@ if __name__ == "__main__":
 
         # Ensure only complete groups are taken
         if len(rows) >= n_genes:
-            row_list.append(rows[:n_genes])
-            labels.append(f"row_{'_'.join(map(str, rows))}")
-
+            rows_to_use = rows[:n_genes]
+            if not check_if_file_exists(rows_to_use, base_config["output_folder"], base_config["type"]):
+                row_list.append(rows_to_use)
+                labels.append(f"row_{'_'.join(map(str, rows_to_use))}")
+            # row_list.append(rows[:n_genes])
+            # labels.append(f"row_{'_'.join(map(str, rows))}")
     param_sets = list(zip(row_list, labels))
     print(len(param_sets))
-    # Use 32 cores split into 4 workers (8 threads each)
-    with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
-        futures = [executor.submit(process_param_set, rows, label, base_config)
-                   for rows, label in param_sets]
-        for fut in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Param sets"):  
-            prefix = fut.result()
-            print(f"Completed simulation: {prefix}")
+    # Modified function wrapper for joblib that sets numba threads internally
+    def process_param_set_with_numba_config(rows, label, config):
+        """
+        Wrapper function that configures numba threads and then processes the parameter set
+        """
+        set_num_threads(base_config['number_of_cores_per_parameter'])
+        print(f"Worker process - Numba threads set to: {get_num_threads()}")
+        
+        # Call your original processing function
+        return process_param_set(rows, label, config)
+
+    # Use joblib instead of concurrent.futures
+    from joblib import Parallel, delayed
+    from tqdm import tqdm
+
+    print(f"Starting joblib with {base_config['number_parallel_processes']} parallel processes")
+
+    # Run parallel processing with joblib
+    results = Parallel(
+        n_jobs=base_config['number_parallel_processes'], 
+        backend='multiprocessing',
+        verbose=0  # Set to 10 for more verbose output
+    )(
+        delayed(process_param_set_with_numba_config)(rows, label, base_config) 
+        for rows, label in tqdm(param_sets, desc="Param sets")
+    )
+
+    # Process results
+    for result in results:
+        if result:
+            print(f"Completed simulation: {result}")

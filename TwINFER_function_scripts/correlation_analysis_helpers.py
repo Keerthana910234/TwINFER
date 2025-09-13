@@ -251,7 +251,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             if g1 in gene_list and g2 in gene_list:
                 i = gene_list.index(g1)
                 j = gene_list.index(g2)
-                plot_matrix.iloc[i, j] = np.nan
+                plot_matrix.iloc[i, j] = 0
                 mask[i, j] = True
 
     # --- Handle vmin/vmax auto-scaling ---
@@ -309,7 +309,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     # --- Black out diagonal if requested ---
     if black_out_self:
         for k in range(len(gene_list)):
-            rect = Rectangle((k, k), 1, 1, facecolor='black', edgecolor='black')
+            rect = Rectangle((k, k), 1, 1, facecolor='#D9D9D9', edgecolor='#D9D9D9')
             ax.add_patch(rect)
 
     # --- Title ---
