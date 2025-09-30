@@ -913,7 +913,7 @@ if __name__ == "__main__":
     parser.add_argument("--number_of_cores_per_parameter", type=int, default=4, required=False, help="Number of cores to be used per parameter (default: 4).")
     parser.add_argument("--n_genes", type=int, default=2, required=False, help="Number of genes in the system (default: 2).")
     parser.add_argument("--n_cells", type=int, default=5000, required=False, help="Number of cells in the system (default: 5000).")
-    parser.add_argument("--simulation_time_before_division", type=int, default=2500, required=False, help="Number of hours to run to achieve steady state (default: 250h0).")
+    parser.add_argument("--simulation_time_before_division", type=int, default=2500, required=False, help="Number of hours to run to achieve steady state (default: 2500h).")
     parser.add_argument("--twin_simulation_time_after_division", type=int, default=48, required=False, help="Number of hours to run after cell division for collecting twin data (default: 48h).")
     parser.add_argument("--twin_measurement_resolution", type=int, default=1, required=False, help="The time duration between every twin measurement (default: 1). For example, if it is 1h, then, data is stored eevry hour.")
     parser.add_argument("--scale_k", type=str, default=None, required=False, help="The matrix of values to scale Hill constant K for each interaction. "
@@ -981,6 +981,7 @@ if __name__ == "__main__":
     labels = []
 
     # Group by pair_id and collect rows for each group
+    print(start_pair, end_pair)
     for pair in range(start_pair, end_pair + 1):
         subset = df[df["pair_id"] == pair].sort_values("gene_id")
         rows = subset.index.tolist()
@@ -993,8 +994,13 @@ if __name__ == "__main__":
                 labels.append(f"row_{'_'.join(map(str, rows_to_use))}")
             # row_list.append(rows[:n_genes])
             # labels.append(f"row_{'_'.join(map(str, rows))}")
+        else:
+            print(rows)
+            print("Error")
+            break
     param_sets = list(zip(row_list, labels))
-    print(len(param_sets))
+    print(base_config["output_folder"])
+    print("length of param_sets", len(param_sets))
     # Modified function wrapper for joblib that sets numba threads internally
     def process_param_set_with_numba_config(rows, label, config):
         """

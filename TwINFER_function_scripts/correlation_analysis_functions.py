@@ -316,7 +316,8 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
                                           use_scramble=True,
                                           p_val_threshold=0.01,
                                           n_shuffles=10000,
-                                          verbose=False):
+                                          verbose=False,
+                                          n_cores_to_use = 4):
     """
     Splits gene-gene pairs based on absolute correlation threshold.
     
@@ -344,7 +345,7 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
     if use_scramble:       
         # Generate null distribution
         
-        n_cores_to_use = max(1, os.cpu_count() - 2)
+        
         shuffled_results = Parallel(n_jobs=n_cores_to_use, verbose=0)(
             delayed(single_cell_shuffle)(gene_matrix, gene_matrix, gene_list, all_pairs) 
             for _ in range(n_shuffles)
@@ -660,8 +661,7 @@ def get_cross_correlations(rep_0_t1,
 
     return raw_matrix, normalized_matrix
 
-
-def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000):
+def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000, n_cores_to_use = 4):
     """
     Identify directed edges that cross significance thresholds using shuffled null distribution.
     
@@ -715,7 +715,6 @@ def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gen
     gene_matrix_t2 = np.array(gene_matrix_t2)
     
     # Safe parallel processing
-    n_cores_to_use = max(1, os.cpu_count() - 2)
     
     # Get shuffled correlations using existing single_cell_shuffle function
     shuffled_results = Parallel(n_jobs=n_cores_to_use, verbose=0)(
