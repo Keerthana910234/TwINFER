@@ -741,7 +741,47 @@ def run_simulation(update_propensities, update_matrix, pop0, time_points, n_cell
         if verbose_flags[cell] == 1:
             print(f"⚠️ WARNING: Cell {cell} got stuck (zero propensities).")
     return samples
+#%%
+import numpy as np
+import numba
 
+def time_dependent_kon(k_on_base, t, t_switch=950, tau=100, scale=3.0):
+    """
+    Smoothly scales k_on after t_switch using a tanh function.
+    k_on(t) = k_on_base * [1 + (scale - 1) * 0.5 * (1 + tanh((t - t_switch) / tau))]
+    """
+    return k_on_base * (1 + (scale - 1) * 0.5 * (1 + np.tanh((t - t_switch) / tau)))
+
+
+def make_time_scaled_update(update_func, k_on_genes, final_value=2.0, t_start=950, tau=100, t_offset=0.0):
+    """
+    Linearly increases k_on for specified genes from 1.0 → final_value 
+    between t_start and t_start + tau (using global time t + t_offset).
+    After the ramp, k_on stays constant at final_value.
+    """
+    @numba.njit(fastmath=True)
+    def wrapped(prop, pop, t):
+        update_func(prop, pop, t)
+        t_global = t + t_offset
+
+        # Linear ramp between t_start and t_start + tau
+        if t_global < t_start:
+            factor = 1.0
+        elif t_global < t_start + tau:
+            # interpolate linearly from 1.0 → final_value
+            frac = (t_global - t_start) / tau
+            factor = 1.0 + (final_value - 1.0) * frac
+        else:
+            factor = final_value
+
+        for g_idx in k_on_genes:
+            prop[g_idx] *= factor
+
+    return wrapped
+
+
+
+#%%
 # --- Worker for a single parameter set ---
 def process_param_set(rows, label, base_config):
     """
@@ -789,10 +829,41 @@ def process_param_set(rows, label, base_config):
 
     pop0, update_matrix, update_prop, species_index = setup_gillespie_params_from_reactions(
         init_states, reactions_df, full_param_dict)
+    # --- Identify k_on-containing reactions ---
+    k_on_reaction_indices = np.where(reactions_df['propensity'].str.contains("k_on"))[0]
+
+    # --- Create two drifted variants: one up (scale>1), one down (scale<1) ---
+    update_prop_up = make_time_scaled_update(
+    update_prop, k_on_reaction_indices, final_value=1.66, t_start=1000, tau=15, t_offset=0
+    )
+    update_prop_down = make_time_scaled_update(
+        update_prop, k_on_reaction_indices, final_value=0.12, t_start=1000, tau=15, t_offset=0
+    )
+
+    t_parent_end = base_config['simulation_time_before_division']
+
+    update_prop_up_twins = make_time_scaled_update(
+        update_prop, k_on_reaction_indices, final_value=1.66, t_start=1000, tau=15, t_offset=t_parent_end
+    )
+    update_prop_down_twins = make_time_scaled_update(
+        update_prop, k_on_reaction_indices, final_value=0.12, t_start=1000, tau=15, t_offset=t_parent_end
+    )
+
     print("Starting base simulation")
     # 1) Run base simulation
-    base_samples = run_simulation(update_prop, update_matrix, pop0, time_points, n_cells)
-    flag = 0
+    # --- Split into two subpopulations with opposite drifts ---
+    print("Starting base simulations (up and down drift)")
+
+    # Half the population for up and half for down
+    n_cells_half = n_cells // 2
+
+    base_samples_up = run_simulation(update_prop_up, update_matrix, pop0, time_points, n_cells_half)
+    base_samples_down = run_simulation(update_prop_down, update_matrix, pop0, time_points, n_cells_half)
+    
+    # Combine them into one array
+    base_samples = np.concatenate([base_samples_up, base_samples_down], axis=0)
+
+    flag = 1
     if not is_steady_state(samples = base_samples, time_points =  time_points, param_dict = full_param_dict, interaction_matrix = connectivity_matrix, gene_list = gene_list):
         print(f"⚠️ Base simulation (basal) for {label} may not be steady. Please manually verify and increase pre-division time if it has not reached steady state.")
         # Log the issue in a separate file
@@ -810,26 +881,67 @@ def process_param_set(rows, label, base_config):
         with open(log_file_path, "a") as log_file:
             log_file.write(json.dumps(error_record) + "\n")
         
-    df_base = convert_samples_to_df(base_samples, species_index)
-    
+    df_base_up = convert_samples_to_df(base_samples_up, species_index)
+    df_base_down = convert_samples_to_df(base_samples_down, species_index)
+    df_base_up['state'] = "up"
+    df_base_down['state'] = "down"
+    df_base = pd.concat([df_base_up, df_base_down])
     # 2) Replicate into two to create daughter cells
-    final_states = base_samples[:, -1, :]
-    del base_samples
-    gc.collect()
-    rep_time = sample_twins_time_points
-    pop0_rep = np.concatenate([final_states.T, final_states.T], axis=1)
-    rep_samples = gillespie_simulation_all_cells(update_prop, update_matrix, pop0_rep, rep_time, np.zeros(2*n_cells, dtype=np.int64))
-    
-    # 3) Extract from simulation and label
-    df_rep = convert_samples_to_df(rep_samples, species_index)
-    n_total = 2 * n_cells
-    replicate_ids = np.repeat([1, 2], n_cells)
-    clone_ids = np.tile(np.arange(n_cells), 2)
+    # Separate the two groups before division
+    final_states_up = base_samples_up[:, -1, :]
+    final_states_down = base_samples_down[:, -1, :]
 
+    # Duplicate each for their two twins
+    pop0_up_twins = np.concatenate([final_states_up.T, final_states_up.T], axis=1)
+    pop0_down_twins = np.concatenate([final_states_down.T, final_states_down.T], axis=1)
+
+    # Simulate both groups independently with same drift logic continuing
+    rep_time = sample_twins_time_points
+    print("Simulating twins (up and down drift continued)...")
+
+    rep_samples_up = gillespie_simulation_all_cells(update_prop_up_twins, update_matrix,
+                                                    pop0_up_twins, rep_time,
+                                                    np.zeros(2 * n_cells_half, dtype=np.int64))
+    rep_samples_down = gillespie_simulation_all_cells(update_prop_down_twins, update_matrix,
+                                                    pop0_down_twins, rep_time,
+                                                    np.zeros(2 * n_cells_half, dtype=np.int64))
+
+    # Combine everything
+    # Combine everything
+    rep_samples = np.concatenate([rep_samples_up, rep_samples_down], axis=0)
+
+    # Convert to dataframe
+    df_rep = convert_samples_to_df(rep_samples, species_index)
+
+    # Total twin cells
+    n_total = 2 * n_cells  # both populations together
+
+    # --- Replicate (twin ID) ---
+    replicate_ids = np.tile([1, 2], n_total // 2)
     df_rep['replicate'] = replicate_ids[df_rep['cell_id']]
+
+    # --- Clone IDs ---
+    # For each population: n_cells_half parents → 2 twins each
+    clone_ids_up = np.repeat(np.arange(n_cells_half), 2)
+    clone_ids_down = np.repeat(np.arange(n_cells_half, n_cells), 2)
+    clone_ids = np.concatenate([clone_ids_up, clone_ids_down])
+
     df_rep['clone_id'] = clone_ids[df_rep['cell_id']]
-    df_rep['cell_id'] = df_rep.index // len(rep_time) 
-    
+
+    # --- State labels ---
+    state_labels = np.repeat(["up"] * (2 * n_cells_half) + ["down"] * (2 * n_cells_half), len(rep_time))
+    df_rep['state'] = state_labels[df_rep['cell_id']]
+
+    # --- Cell ID ---
+    df_rep['cell_id'] = df_rep.index // len(rep_time)
+
+
+    # --- Correct state assignment ---
+    n_cells_half = n_cells // 2
+    # each parent produces two twins → first half of clones are "up", second "down"
+    cell_states = np.array(["up"] * (2 * n_cells_half) + ["down"] * (2 * n_cells_half))
+    df_rep['state'] = cell_states[df_rep['cell_id']]
+
     # 4) Save
     timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
     id = uuid.uuid4().hex[:8]
@@ -867,6 +979,7 @@ def check_if_file_exists(rows, output_folder, type_name):
     if existing_files:
         return True
     return False
+
 #%%
 # --- Main execution with parallel parameter sets ---
 if __name__ == "__main__":
