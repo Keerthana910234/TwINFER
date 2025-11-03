@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=42
 #SBATCH --mem=4GB
-#SBATCH --time=12:00:00
+#SBATCH --time=8:00:00
 #SBATCH --job-name=Parameter-Analysis
 #SBATCH --output=/home/gzu5140/Keerthana_b1042/grnInference/logs/slurmLog-%A_%a-%x.out
 #SBATCH --error=/home/gzu5140/Keerthana_b1042/grnInference/logs/slurmLog-%A_%a-%x.err
@@ -16,7 +16,7 @@ conda activate twinfer
 which python
 
 path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_B"
-out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan/A_B_2_states"
+out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_B_2_states"
 
 # Each array task processes a different chunk
 # Make job-specific subfolder
@@ -35,10 +35,11 @@ mkdir -p "$job_out"
   --batch_size 500 \
   --save_interval 500 \
   --seed 2025 \
-  --mode "pair"
+  --mode "pair" \
+  --csv "/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_B_2_states/two_state_pairs_final.csv"
 
 path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_to_B"
-out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan/A_to_B_2_states"
+out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_to_B_2_states"
 
 # Each array task processes a different chunk
 # Make job-specific subfolder
@@ -57,10 +58,11 @@ mkdir -p "$job_out"
   --batch_size 500 \
   --save_interval 500 \
   --seed 2025 \
-  --mode "pair"
+  --mode "pair" \
+  --csv "/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_to_B_2_states/two_state_pairs_final.csv"
 
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_and_B"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan/A_and_B_2_states"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_and_B_2_states"
 
 # # Each array task processes a different chunk
 # # Make job-specific subfolder
@@ -79,10 +81,11 @@ mkdir -p "$job_out"
 #   --batch_size 500 \
 #   --save_interval 500 \
 #   --seed 2025 \
-#   --mode "pair"
+#   --mode "pair" \
+#   --csv "/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_and_B_2_states/two_state_pairs_final.csv"
 
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_rep_B/"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan/A_rep_B_2_states"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_rep_B_2_states"
 
 
 # # Make job-specific subfolder
@@ -101,10 +104,11 @@ mkdir -p "$job_out"
 #   --batch_size 500 \
 #   --save_interval 500 \
 #   --seed 2025 \
-#   --mode "pair"
+#   --mode "pair" \
+#   --csv "/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_rep_B_2_states/two_state_pairs_final.csv"
 
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_rep_B"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_rep_B"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_rep_B"
 
 # # Each array task processes a different chunk
 # # Make job-specific subfolder
@@ -129,7 +133,7 @@ mkdir -p "$job_out"
 
 # # Fixed input/output paths
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_and_B"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_and_B"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_and_B"
 
 # # Each array task processes a different chunk
 # # Make job-specific subfolder
@@ -152,7 +156,7 @@ mkdir -p "$job_out"
 
 # Fixed input/output paths
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_B"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_B"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_B"
 
 # Each array task processes a different chunk
 # Make job-specific subfolder
@@ -174,7 +178,7 @@ mkdir -p "$job_out"
 
 #   # Fixed input/output paths
 # path="/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/parameter_scan_simulations/A_to_B"
-# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_1_20/A_to_B"
+# out="/home/gzu5140/Keerthana_b1042/grnInference/analysisData/parameter_scan_random_null_1_20/A_to_B"
 
 # # Each array task processes a different chunk
 # # Make job-specific subfolder

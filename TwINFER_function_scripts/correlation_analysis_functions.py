@@ -173,39 +173,105 @@ def calculate_pairwise_gene_gene_correlation_matrix(simulation_at_t1, gene_list)
 def get_correlations(correlation_dict, gene_i, gene_j):
    return correlation_dict[tuple(sorted([gene_i, gene_j]))]
 
-def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
-   np.random.seed(random_state)
+# def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
+#    np.random.seed(random_state)
    
-   rep_0 = simulation_data[simulation_data['replicate'] == 1].reset_index(drop=True)
-   rep_1 = simulation_data[simulation_data['replicate'] == 2].reset_index(drop=True)
-   gene_cols = [f"{gene}_mRNA" for gene in gene_list]
-   min_cells = min(len(rep_0), len(rep_1))
-   expr_0 = rep_0[gene_cols].iloc[:min_cells].values
-   expr_1 = rep_1[gene_cols].iloc[:min_cells].values
+#    rep_0 = simulation_data[simulation_data['replicate'] == 1].reset_index(drop=True)
+#    rep_1 = simulation_data[simulation_data['replicate'] == 2].reset_index(drop=True)
+#    gene_cols = [f"{gene}_mRNA" for gene in gene_list]
+#    min_cells = min(len(rep_0), len(rep_1))
+#    expr_0 = rep_0[gene_cols].iloc[:min_cells].values
+#    expr_1 = rep_1[gene_cols].iloc[:min_cells].values
 
-   n_cells, n_genes = expr_0.shape
-   triu_indices = np.triu_indices(n_genes, k=1)
-   gene_pairs = [(gene_list[i], gene_list[j]) for i, j in zip(triu_indices[0], triu_indices[1])]
+#    n_cells, n_genes = expr_0.shape
+#    triu_indices = np.triu_indices(n_genes, k=1)
+#    gene_pairs = [(gene_list[i], gene_list[j]) for i, j in zip(triu_indices[0], triu_indices[1])]
    
-   all_shuffle_indices = np.array([np.random.permutation(n_cells) for _ in range(n_shuffles)])
-   all_correlations = np.zeros((n_shuffles, len(gene_pairs)))
+#    all_shuffle_indices = np.array([np.random.permutation(n_cells) for _ in range(n_shuffles)])
+#    all_correlations = np.zeros((n_shuffles, len(gene_pairs)))
    
-   for batch_start in range(0, n_shuffles, 100):
-       batch_end = min(batch_start + 100, n_shuffles)
-       for i, shuffle_idx in enumerate(all_shuffle_indices[batch_start:batch_end]):
-           expr_1_shuffled = expr_1[shuffle_idx]
-           deltas = expr_0 - expr_1_shuffled
-           ranked_deltas = np.apply_along_axis(rankdata, 0, deltas)
-           corr_matrix = np.corrcoef(ranked_deltas.T)
-           all_correlations[batch_start + i] = corr_matrix[triu_indices]
+#    for batch_start in range(0, n_shuffles, 100):
+#        batch_end = min(batch_start + 100, n_shuffles)
+#        for i, shuffle_idx in enumerate(all_shuffle_indices[batch_start:batch_end]):
+#            expr_1_shuffled = expr_1[shuffle_idx]
+#            deltas = expr_0 - expr_1_shuffled
+#            ranked_deltas = np.apply_along_axis(rankdata, 0, deltas)
+#            corr_matrix = np.corrcoef(ranked_deltas.T)
+#            all_correlations[batch_start + i] = corr_matrix[triu_indices]
    
-   # Store with sorted keys to avoid duplicates
-   correlation_dict = {}
-   for i, (gene_i, gene_j) in enumerate(gene_pairs):
-       key = tuple(sorted([gene_i, gene_j]))
-       correlation_dict[key] = all_correlations[:, i]
+#    # Store with sorted keys to avoid duplicates
+#    correlation_dict = {}
+#    for i, (gene_i, gene_j) in enumerate(gene_pairs):
+#        key = tuple(sorted([gene_i, gene_j]))
+#        correlation_dict[key] = all_correlations[:, i]
    
-   return correlation_dict
+#    return correlation_dict
+
+import numpy as np
+import pandas as pd
+from scipy.stats import rankdata
+
+def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
+    """
+    Generate null distributions of gene–gene correlations by random pairing of cells,
+    independent of any 'replicate' column.
+
+    Parameters
+    ----------
+    simulation_data : pd.DataFrame
+        Simulation dataframe containing at least 'clone_id' and '{gene}_mRNA' columns.
+
+    gene_list : list of str
+        Gene base names (without '_mRNA' suffix).
+
+    n_shuffles : int, default=10000
+        Number of random shuffles to perform.
+
+    random_state : int, default=42
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    correlation_dict : dict
+        Mapping {(gene_i, gene_j): np.ndarray of shuffled correlations}.
+    """
+    rng = np.random.default_rng(random_state)
+
+    gene_cols = [f"{gene}_mRNA" for gene in gene_list]
+    expr = simulation_data[gene_cols].dropna().to_numpy()
+    n_cells, n_genes = expr.shape
+
+    triu_indices = np.triu_indices(n_genes, k=1)
+    gene_pairs = [(gene_list[i], gene_list[j]) for i, j in zip(*triu_indices)]
+
+    all_correlations = np.zeros((n_shuffles, len(gene_pairs)), dtype=np.float64)
+
+    # --- Random pairing: pick two distinct sets of cells for difference computation
+    for s in range(n_shuffles):
+        idx_1 = rng.choice(n_cells, size=n_cells, replace=False)
+        idx_2 = rng.choice(n_cells, size=n_cells, replace=False)
+        # Optionally avoid same-cell pairings
+        mask = idx_1 != idx_2
+        expr_1 = expr[idx_1[mask]]
+        expr_2 = expr[idx_2[mask]]
+
+        n_used = min(len(expr_1), len(expr_2))
+        if n_used < 3:
+            continue
+
+        deltas = expr_1[:n_used] - expr_2[:n_used]
+        ranked_deltas = np.apply_along_axis(rankdata, 0, deltas)
+        corr_matrix = np.corrcoef(ranked_deltas.T)
+        all_correlations[s] = corr_matrix[triu_indices]
+
+    # --- Package as dict for downstream comparison
+    correlation_dict = {
+        tuple(sorted((gi, gj))): all_correlations[:, k]
+        for k, (gi, gj) in enumerate(gene_pairs)
+    }
+
+    return correlation_dict
+
 
 # def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
 #                                           pairwise_gene_gene_correlation_matrix, 
@@ -429,44 +495,120 @@ def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
             correlations[f"{gene_1}-{gene_2}"] = corr
     return correlations
 
-def calculate_twin_random_pair_correlations(simulation_two_time, simulation_single_time, gene_list):
+def calculate_twin_random_pair_correlations(simulation_two_time, simulation_single_time, gene_list, n_random=None, seed=10100):
     """
-    Computes twin and random pairwise correlation matrices at a given time point.
+    Computes twin and random pairwise gene-gene correlation matrices.
 
     Parameters
     ----------
+    simulation_two_time : pd.DataFrame
+        Full dataset at the given time point(s), used for random pairing.
+        Must contain 'clone_id' and '{gene}_mRNA' for each gene in gene_list.
+
     simulation_single_time : pd.DataFrame
-        Subset of simulation data at a single time point. Must contain:
-        - 'replicate' column (1 for twin A, 2 for twin B)
-        - 'clone_id'
-        - '{gene}_mRNA' for each gene in gene_list
+        Subset at the same time point, used for true twin correlation.
+        Must contain 'clone_id' and '{gene}_mRNA' for each gene in gene_list.
 
     gene_list : list of str
         List of gene names (without "_mRNA" suffix) to analyze.
 
+    n_random : int, optional
+        Number of random pairs to sample. If None, equals number of true twin pairs.
+
+    seed : int, default=10100
+        Random seed for reproducibility.
+
     Returns
     -------
-    twin_correlation_matrix : pd.DataFrame
-        Matrix of gene-gene Spearman correlations computed between true twin pairs.
+    twin_corr_matrix : pd.DataFrame
+        Gene–gene Spearman correlations between true twin pairs.
 
-    random_correlation_matrix : pd.DataFrame
-        Matrix of gene-gene Spearman correlations between randomly paired clones.
+    random_corr_matrix : pd.DataFrame
+        Gene–gene Spearman correlations between random pairs of cells.
     """
-    # Separate replicate 1 and replicate 2
-    rep_0 = simulation_single_time[simulation_single_time['replicate'] == 1]
-    rep_1 = simulation_single_time[simulation_single_time['replicate'] == 2]
+    rng = np.random.default_rng(seed)
 
-    # Calculate correlations using matched twin pairs
-    twin_correlation_dict = calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin")
-    twin_correlation_matrix = dict_to_matrix(twin_correlation_dict, gene_list)
+    # --- Twin pairs: two cells with same clone_id ---
+    twins = (
+        simulation_single_time.groupby("clone_id")
+        .filter(lambda g: len(g) == 2)  # only valid twin clones
+        .groupby("clone_id")
+    )
 
-    # Calculate correlations using randomly shuffled pairs
-    random_rep_0 = simulation_two_time[simulation_two_time['replicate'] == 1]
-    random_rep_1 = simulation_two_time[simulation_two_time['replicate'] == 2]
-    random_rep_1_shuffled = random_rep_1.sample(frac=1, random_state=10100).reset_index(drop=True)
-    random_correlation_dict = calculate_pair_correlation(random_rep_0, random_rep_1_shuffled, gene_list, type_comparison="random")
-    random_correlation_matrix = dict_to_matrix(random_correlation_dict, gene_list)
-    return twin_correlation_matrix, random_correlation_matrix
+    twin_pairs = []
+    for cid, group in twins:
+        if len(group) == 2:
+            twin_pairs.append(group)
+    if not twin_pairs:
+        raise ValueError("No valid twin pairs (clone_id with exactly 2 cells) found!")
+
+    rep_0 = pd.concat([g.iloc[[0]] for g in twin_pairs], ignore_index=True)
+    rep_1 = pd.concat([g.iloc[[1]] for g in twin_pairs], ignore_index=True)
+
+    twin_corr_dict = calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin")
+    twin_corr_matrix = dict_to_matrix(twin_corr_dict, gene_list)
+
+    # --- Random pairs: random cells from different clones ---
+    all_cells = simulation_two_time.reset_index(drop=True)
+    n_cells = len(all_cells)
+    n_pairs = n_random or len(rep_0)
+
+    # Draw random pairs without replacement in each position, ensuring different clone_ids
+    rand_pairs = []
+    attempts = 0
+    max_attempts = n_pairs * 10
+    while len(rand_pairs) < n_pairs and attempts < max_attempts:
+        i, j = rng.choice(n_cells, size=2, replace=False)
+        if all_cells.loc[i, "clone_id"] != all_cells.loc[j, "clone_id"]:
+            rand_pairs.append((i, j))
+        attempts += 1
+
+    random_0 = all_cells.loc[[i for i, _ in rand_pairs]].reset_index(drop=True)
+    random_1 = all_cells.loc[[j for _, j in rand_pairs]].reset_index(drop=True)
+
+    random_corr_dict = calculate_pair_correlation(random_0, random_1, gene_list, type_comparison="random")
+    random_corr_matrix = dict_to_matrix(random_corr_dict, gene_list)
+
+    return twin_corr_matrix, random_corr_matrix
+
+# def calculate_twin_random_pair_correlations(simulation_two_time, simulation_single_time, gene_list):
+#     """
+#     Computes twin and random pairwise correlation matrices at a given time point.
+
+#     Parameters
+#     ----------
+#     simulation_single_time : pd.DataFrame
+#         Subset of simulation data at a single time point. Must contain:
+#         - 'replicate' column (1 for twin A, 2 for twin B)
+#         - 'clone_id'
+#         - '{gene}_mRNA' for each gene in gene_list
+
+#     gene_list : list of str
+#         List of gene names (without "_mRNA" suffix) to analyze.
+
+#     Returns
+#     -------
+#     twin_correlation_matrix : pd.DataFrame
+#         Matrix of gene-gene Spearman correlations computed between true twin pairs.
+
+#     random_correlation_matrix : pd.DataFrame
+#         Matrix of gene-gene Spearman correlations between randomly paired clones.
+#     """
+#     # Separate replicate 1 and replicate 2
+#     rep_0 = simulation_single_time[simulation_single_time['replicate'] == 1]
+#     rep_1 = simulation_single_time[simulation_single_time['replicate'] == 2]
+
+#     # Calculate correlations using matched twin pairs
+#     twin_correlation_dict = calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin")
+#     twin_correlation_matrix = dict_to_matrix(twin_correlation_dict, gene_list)
+
+#     # Calculate correlations using randomly shuffled pairs
+#     random_rep_0 = simulation_two_time[simulation_two_time['replicate'] == 1]
+#     random_rep_1 = simulation_two_time[simulation_two_time['replicate'] == 2]
+#     random_rep_1_shuffled = random_rep_1.sample(frac=1, random_state=10100).reset_index(drop=True)
+#     random_correlation_dict = calculate_pair_correlation(random_rep_0, random_rep_1_shuffled, gene_list, type_comparison="random")
+#     random_correlation_matrix = dict_to_matrix(random_correlation_dict, gene_list)
+#     return twin_correlation_matrix, random_correlation_matrix
 
 def differentiate_single_state_reg_and_multiple_states(all_t1_t2_measurements, potential_regulation, twin_correlation_matrix, random_correlation_matrix, gene_list, z_score_threshold=10, verbose = True):
     """
