@@ -843,10 +843,10 @@ def process_param_set(rows, label, base_config):
     t_parent_end = base_config['simulation_time_before_division']
 
     update_prop_up_twins = make_time_scaled_update(
-        update_prop, k_on_reaction_indices, final_value=1.66, t_start=1000, tau=15, t_offset=t_parent_end
+        update_prop, k_on_reaction_indices, final_value=1.66, t_start=1000, tau=30, t_offset=t_parent_end
     )
     update_prop_down_twins = make_time_scaled_update(
-        update_prop, k_on_reaction_indices, final_value=0.12, t_start=1000, tau=15, t_offset=t_parent_end
+        update_prop, k_on_reaction_indices, final_value=0.12, t_start=1015, tau=5, t_offset=t_parent_end
     )
 
     print("Starting base simulation")
@@ -855,13 +855,14 @@ def process_param_set(rows, label, base_config):
     print("Starting base simulations (up and down drift)")
 
     # Half the population for up and half for down
-    n_cells_half = n_cells // 2
+    n_cells_third = n_cells //3
 
-    base_samples_up = run_simulation(update_prop_up, update_matrix, pop0, time_points, n_cells_half)
-    base_samples_down = run_simulation(update_prop_down, update_matrix, pop0, time_points, n_cells_half)
+    base_samples_up = run_simulation(update_prop_up, update_matrix, pop0, time_points, n_cells_third)
+    base_samples_mid = run_simulation(update_prop, update_matrix, pop0, time_points, n_cells_third)
+    base_samples_down = run_simulation(update_prop_down, update_matrix, pop0, time_points, n_cells_third)
     
     # Combine them into one array
-    base_samples = np.concatenate([base_samples_up, base_samples_down], axis=0)
+    base_samples = np.concatenate([base_samples_up, base_samples_mid, base_samples_down], axis=0)
 
     flag = 1
     if not is_steady_state(samples = base_samples, time_points =  time_points, param_dict = full_param_dict, interaction_matrix = connectivity_matrix, gene_list = gene_list):
@@ -882,17 +883,21 @@ def process_param_set(rows, label, base_config):
             log_file.write(json.dumps(error_record) + "\n")
         
     df_base_up = convert_samples_to_df(base_samples_up, species_index)
+    df_base_mid = convert_samples_to_df(base_samples_mid, species_index)
     df_base_down = convert_samples_to_df(base_samples_down, species_index)
     df_base_up['state'] = "up"
+    df_base_mid['state'] = "mid"
     df_base_down['state'] = "down"
     df_base = pd.concat([df_base_up, df_base_down])
     # 2) Replicate into two to create daughter cells
     # Separate the two groups before division
     final_states_up = base_samples_up[:, -1, :]
+    final_states_mid = base_samples_mid[:, -1, :]
     final_states_down = base_samples_down[:, -1, :]
 
     # Duplicate each for their two twins
     pop0_up_twins = np.concatenate([final_states_up.T, final_states_up.T], axis=1)
+    pop0_mid_twins = np.concatenate([final_states_mid.T, final_states_up.T], axis=1)
     pop0_down_twins = np.concatenate([final_states_down.T, final_states_down.T], axis=1)
 
     # Simulate both groups independently with same drift logic continuing
@@ -901,14 +906,16 @@ def process_param_set(rows, label, base_config):
 
     rep_samples_up = gillespie_simulation_all_cells(update_prop_up_twins, update_matrix,
                                                     pop0_up_twins, rep_time,
-                                                    np.zeros(2 * n_cells_half, dtype=np.int64))
+                                                    np.zeros(2 * n_cells_third, dtype=np.int64))
+    rep_samples_mid = gillespie_simulation_all_cells(update_prop, update_matrix,
+                                                    pop0_mid_twins, rep_time,
+                                                    np.zeros(2 * n_cells_third, dtype=np.int64))
     rep_samples_down = gillespie_simulation_all_cells(update_prop_down_twins, update_matrix,
                                                     pop0_down_twins, rep_time,
-                                                    np.zeros(2 * n_cells_half, dtype=np.int64))
+                                                    np.zeros(2 * n_cells_third, dtype=np.int64))
 
     # Combine everything
-    # Combine everything
-    rep_samples = np.concatenate([rep_samples_up, rep_samples_down], axis=0)
+    rep_samples = np.concatenate([rep_samples_up, rep_samples_mid, rep_samples_down], axis=0)
 
     # Convert to dataframe
     df_rep = convert_samples_to_df(rep_samples, species_index)
@@ -921,15 +928,16 @@ def process_param_set(rows, label, base_config):
     df_rep['replicate'] = replicate_ids[df_rep['cell_id']]
 
     # --- Clone IDs ---
-    # For each population: n_cells_half parents → 2 twins each
-    clone_ids_up = np.repeat(np.arange(n_cells_half), 2)
-    clone_ids_down = np.repeat(np.arange(n_cells_half, n_cells), 2)
-    clone_ids = np.concatenate([clone_ids_up, clone_ids_down])
+    # For each population: n_cells_third parents → 2 twins each
+    clone_ids_up = np.repeat(np.arange(0, n_cells_third), 2)
+    clone_ids_mid = np.repeat(np.arange(n_cells_third, n_cells_third*2 ), 2)
+    clone_ids_down = np.repeat(np.arange(n_cells_third*2, n_cells), 2)
+    clone_ids = np.concatenate([clone_ids_up, clone_ids_mid, clone_ids_down])
 
     df_rep['clone_id'] = clone_ids[df_rep['cell_id']]
 
     # --- State labels ---
-    state_labels = np.repeat(["up"] * (2 * n_cells_half) + ["down"] * (2 * n_cells_half), len(rep_time))
+    state_labels = np.repeat(["up"] * (2 * n_cells_third) + ["mid"] * (2 * n_cells_third) + ["down"] * (2 * n_cells_third), len(rep_time))
     df_rep['state'] = state_labels[df_rep['cell_id']]
 
     # --- Cell ID ---
@@ -937,9 +945,9 @@ def process_param_set(rows, label, base_config):
 
 
     # --- Correct state assignment ---
-    n_cells_half = n_cells // 2
+    n_cells_third = n_cells // 3
     # each parent produces two twins → first half of clones are "up", second "down"
-    cell_states = np.array(["up"] * (2 * n_cells_half) + ["down"] * (2 * n_cells_half))
+    cell_states = np.array(["up"] * (2 * n_cells_third) + ["mid"] * (2 * n_cells_third) + ["down"] * (2 * n_cells_third))
     df_rep['state'] = cell_states[df_rep['cell_id']]
 
     # 4) Save
