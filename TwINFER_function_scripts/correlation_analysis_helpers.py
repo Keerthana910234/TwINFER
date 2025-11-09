@@ -532,9 +532,16 @@ def print_summary(no_regulation,
         print(f"\n{'=' * len(title)}\n{title}\n{'=' * len(title)}")
         if not pairs:
             print("  (none)")
-        else:
-            for g1, g2 in pairs:
+            return
+
+        # Use a set to keep track of already-seen symmetric pairs
+        seen = set()
+        for g1, g2 in pairs:
+            key = tuple(sorted((g1, g2)))  # unordered representation
+            if key not in seen:
                 print(f"  {g1} - {g2}")
+                seen.add(key)
+
 
     print_section("1. No Regulation", no_regulation)
     print_section("2. Single-State Regulation", single_state_regulation)
