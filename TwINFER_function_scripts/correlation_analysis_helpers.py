@@ -255,19 +255,25 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
                 mask[i, j] = True
 
     # --- Handle vmin/vmax auto-scaling ---
-    data_values = plot_matrix.values.flatten()
-    data_values = data_values[~np.isnan(data_values)]
+    temp_values = plot_matrix.values.copy()
+
+    # Exclude diagonal values only for vmin/vmax estimation
+    if black_out_self:
+        np.fill_diagonal(temp_values, np.nan)
+
+    data_values = temp_values[~np.isnan(temp_values)]
 
     if len(data_values) == 0:
         vmin, vmax = -1.0, 1.0
     else:
         if vmin is None:
-            vmin = np.min(data_values)
+            vmin = np.nanmin(data_values)
         if vmax is None:
-            vmax = np.max(data_values)
+            vmax = np.nanmax(data_values)
         if vmin == vmax:
             vmin -= 1e-4
             vmax += 1e-4
+
 
     # --- Choose colormap adaptively ---
     if cmap is None and vmin < 0 and vmax > 0:
@@ -298,19 +304,28 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     )
 
     # --- Add regulation boxes ---
+    # --- Add regulation boxes (symmetric outlines) ---
+    # --- Black out diagonal if requested ---
+    if black_out_self:
+        for k in range(len(gene_list)):
+            rect = Rectangle((k, k), 1, 1, facecolor='#D9D9D9', edgecolor='none')
+            ax.add_patch(rect)
     if potential_regulation:
         for g1, g2 in potential_regulation:
             if g1 in gene_list and g2 in gene_list:
                 i = gene_list.index(g1)
                 j = gene_list.index(g2)
-                rect = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=2)
-                ax.add_patch(rect)
 
-    # --- Black out diagonal if requested ---
-    if black_out_self:
-        for k in range(len(gene_list)):
-            rect = Rectangle((k, k), 1, 1, facecolor='#D9D9D9', edgecolor='#D9D9D9')
-            ax.add_patch(rect)
+                # Outline (j, i)
+                rect1 = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                ax.add_patch(rect1)
+
+                # Outline symmetric (i, j)
+                if i != j:  # avoid drawing twice on diagonal
+                    rect2 = Rectangle((i, j), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                    ax.add_patch(rect2)
+
+
 
     # --- Title ---
     if title:

@@ -387,7 +387,7 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
     """
     Splits gene-gene pairs based on absolute correlation threshold.
     
-    Returns: no_regulation, potential_regulation, final_threshold
+    Returns: no_regulation, potential_regulation
     """
     
     # Extract gene matrices from DataFrame
@@ -448,9 +448,8 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
         # Classify pairs
         target_list = potential_regulation if abs(corr_val) > current_threshold else no_regulation
         target_list.append((gi, gj))
-        target_list.append((gj, gi))
     
-    return no_regulation, potential_regulation, current_threshold
+    return no_regulation, potential_regulation
 
 def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
     """
