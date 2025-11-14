@@ -803,7 +803,7 @@ def get_cross_correlations(rep_0_t1,
 
     return raw_matrix, normalized_matrix
 
-def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000, n_cores_to_use = 4):
+def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000, n_cores_to_use = 4, verbose = False):
     """
     Identify directed edges that cross significance thresholds using shuffled null distribution.
     
@@ -880,7 +880,8 @@ def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gen
         
         # Calculate threshold for this pair
         pair_threshold = np.percentile(shuffled_vals, percentile_threshold)
-        
+        if verbose:
+            print(f"{gene_1} -> {gene_2}: threshold = {pair_threshold}, actual = {actual_corr}")
         # Check if actual correlation crosses threshold
         if abs(actual_corr) > pair_threshold:
             significant_edges.append((gene_1, gene_2))    

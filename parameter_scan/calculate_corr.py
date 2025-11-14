@@ -495,7 +495,8 @@ def process_simulation(
     #############################
     # REMOVE TWIN STRUCTURE
     #############################
-    
+    row = {}
+    row['param_index'] = param_index
     # -----------------------
     # Build time pairs (t1 < t2)
     # -----------------------
