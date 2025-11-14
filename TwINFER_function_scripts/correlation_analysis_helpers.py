@@ -211,7 +211,7 @@ from matplotlib.colors import TwoSlopeNorm
 
 def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential_regulation=None, title=None, add_gene_labels=True,
                             add_time=False, time=None, gray_out_no_reg=False, vmin=None, vmax=None, cmap=None, 
-                            return_plot=False, black_out_self=False):
+                            return_plot=False, black_out_self=False,figsize_input= (8, 6), symmetric = True):
     """
     Plot a gene-gene correlation matrix as a heatmap with regulatory overlays and dynamic formatting.
     """
@@ -223,17 +223,17 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             raise ValueError("Time can have at most two entries.")
 
     # Format gene names: gene_1 → g1
-    base_names = [g.replace("gene_", "g") for g in gene_list]
+    base_names =  gene_list
 
     # Format axis labels
     if add_gene_labels:
         if add_time:
             if len(time) == 1:
-                row_labels = [f"$g{i}_{{{time[0]}}}$" for i in range(1, len(base_names) + 1)]
+                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
                 col_labels = row_labels
             else:
-                row_labels = [f"$g{i}_{{{time[0]}}}$" for i in range(1, len(base_names) + 1)]
-                col_labels = [f"$g{i}_{{{time[1]}}}$" for i in range(1, len(base_names) + 1)]
+                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
+                col_labels = [f"${i}_{{{time[1]}}}$" for i in base_names]
         else:
             row_labels = base_names
             col_labels = base_names
@@ -286,7 +286,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             cmap = "Blues" if vmin >= 0 else "Reds"
 
     # --- Plot heatmap ---
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=figsize_input)
     heatmap = sns.heatmap(
         plot_matrix,
         ax=ax,
@@ -315,15 +315,15 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             if g1 in gene_list and g2 in gene_list:
                 i = gene_list.index(g1)
                 j = gene_list.index(g2)
+                if symmetric:
+                    # Outline (j, i)
+                    rect1 = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                    ax.add_patch(rect1)
 
-                # Outline (j, i)
-                rect1 = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=1)
-                ax.add_patch(rect1)
-
-                # Outline symmetric (i, j)
-                if i != j:  # avoid drawing twice on diagonal
-                    rect2 = Rectangle((i, j), 1, 1, fill=False, edgecolor='black', linewidth=1)
-                    ax.add_patch(rect2)
+                    # Outline symmetric (i, j)
+                    if i != j:  # avoid drawing twice on diagonal
+                        rect2 = Rectangle((i, j), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                        ax.add_patch(rect2)
 
 
 
