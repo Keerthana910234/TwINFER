@@ -211,7 +211,7 @@ from matplotlib.colors import TwoSlopeNorm
 
 def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential_regulation=None, title=None, add_gene_labels=True,
                             add_time=False, time=None, gray_out_no_reg=False, vmin=None, vmax=None, cmap=None, 
-                            return_plot=False, black_out_self=False):
+                            return_plot=False, black_out_self=False,figsize_input= (8, 6), symmetric = True):
     """
     Plot a gene-gene correlation matrix as a heatmap with regulatory overlays and dynamic formatting.
     """
@@ -223,17 +223,17 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             raise ValueError("Time can have at most two entries.")
 
     # Format gene names: gene_1 → g1
-    base_names = [g.replace("gene_", "g") for g in gene_list]
+    base_names =  gene_list
 
     # Format axis labels
     if add_gene_labels:
         if add_time:
             if len(time) == 1:
-                row_labels = [f"$g{i}_{{{time[0]}}}$" for i in range(1, len(base_names) + 1)]
+                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
                 col_labels = row_labels
             else:
-                row_labels = [f"$g{i}_{{{time[0]}}}$" for i in range(1, len(base_names) + 1)]
-                col_labels = [f"$g{i}_{{{time[1]}}}$" for i in range(1, len(base_names) + 1)]
+                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
+                col_labels = [f"${i}_{{{time[1]}}}$" for i in base_names]
         else:
             row_labels = base_names
             col_labels = base_names
@@ -255,19 +255,25 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
                 mask[i, j] = True
 
     # --- Handle vmin/vmax auto-scaling ---
-    data_values = plot_matrix.values.flatten()
-    data_values = data_values[~np.isnan(data_values)]
+    temp_values = plot_matrix.values.copy()
+
+    # Exclude diagonal values only for vmin/vmax estimation
+    if black_out_self:
+        np.fill_diagonal(temp_values, np.nan)
+
+    data_values = temp_values[~np.isnan(temp_values)]
 
     if len(data_values) == 0:
         vmin, vmax = -1.0, 1.0
     else:
         if vmin is None:
-            vmin = np.min(data_values)
+            vmin = np.nanmin(data_values)
         if vmax is None:
-            vmax = np.max(data_values)
+            vmax = np.nanmax(data_values)
         if vmin == vmax:
             vmin -= 1e-4
             vmax += 1e-4
+
 
     # --- Choose colormap adaptively ---
     if cmap is None and vmin < 0 and vmax > 0:
@@ -280,7 +286,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
             cmap = "Blues" if vmin >= 0 else "Reds"
 
     # --- Plot heatmap ---
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=figsize_input)
     heatmap = sns.heatmap(
         plot_matrix,
         ax=ax,
@@ -298,19 +304,28 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     )
 
     # --- Add regulation boxes ---
+    # --- Add regulation boxes (symmetric outlines) ---
+    # --- Black out diagonal if requested ---
+    if black_out_self:
+        for k in range(len(gene_list)):
+            rect = Rectangle((k, k), 1, 1, facecolor='#D9D9D9', edgecolor='none')
+            ax.add_patch(rect)
     if potential_regulation:
         for g1, g2 in potential_regulation:
             if g1 in gene_list and g2 in gene_list:
                 i = gene_list.index(g1)
                 j = gene_list.index(g2)
-                rect = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=2)
-                ax.add_patch(rect)
+                if symmetric:
+                    # Outline (j, i)
+                    rect1 = Rectangle((j, i), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                    ax.add_patch(rect1)
 
-    # --- Black out diagonal if requested ---
-    if black_out_self:
-        for k in range(len(gene_list)):
-            rect = Rectangle((k, k), 1, 1, facecolor='#D9D9D9', edgecolor='#D9D9D9')
-            ax.add_patch(rect)
+                    # Outline symmetric (i, j)
+                    if i != j:  # avoid drawing twice on diagonal
+                        rect2 = Rectangle((i, j), 1, 1, fill=False, edgecolor='black', linewidth=1)
+                        ax.add_patch(rect2)
+
+
 
     # --- Title ---
     if title:
@@ -532,9 +547,16 @@ def print_summary(no_regulation,
         print(f"\n{'=' * len(title)}\n{title}\n{'=' * len(title)}")
         if not pairs:
             print("  (none)")
-        else:
-            for g1, g2 in pairs:
+            return
+
+        # Use a set to keep track of already-seen symmetric pairs
+        seen = set()
+        for g1, g2 in pairs:
+            key = tuple(sorted((g1, g2)))  # unordered representation
+            if key not in seen:
                 print(f"  {g1} - {g2}")
+                seen.add(key)
+
 
     print_section("1. No Regulation", no_regulation)
     print_section("2. Single-State Regulation", single_state_regulation)
