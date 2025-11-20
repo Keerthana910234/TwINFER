@@ -227,13 +227,14 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
 
     # Format axis labels
     if add_gene_labels:
+        base_names = [i.replace("_", "-") for i in base_names]
         if add_time:
             if len(time) == 1:
-                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
+                row_labels = [rf"$\text{{{i}}}_{{{time[0]}}}$" for i in base_names]
                 col_labels = row_labels
             else:
-                row_labels = [f"${i}_{{{time[0]}}}$" for i in base_names]
-                col_labels = [f"${i}_{{{time[1]}}}$" for i in base_names]
+                row_labels = [rf"$\text{{{i}}}_{{{time[0]}}}$" for i in base_names]
+                col_labels = [rf"$\text{{{i}}}_{{{time[1]}}}$" for i in base_names]
         else:
             row_labels = base_names
             col_labels = base_names
