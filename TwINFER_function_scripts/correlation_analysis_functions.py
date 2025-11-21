@@ -786,22 +786,7 @@ def get_cross_correlations(rep_0_t1,
         y = rep_1_t2[f"{gene_2}_mRNA"]
         corr = spearmanr(x, y).correlation
         raw_matrix.loc[gene_1, gene_2] = corr
-
-    # Compute normalized matrix
-    normalized_matrix = pd.DataFrame(index=gene_list, columns=gene_list, dtype=float)
-    for g1 in gene_list:
-        self_corr = raw_matrix.loc[g1, g1]
-        for g2 in gene_list:
-            raw_val = raw_matrix.loc[g1, g2]
-            if self_corr == 0 or pd.isna(self_corr):
-                norm_val = 0.0
-            else:
-                norm_val = raw_val / abs(self_corr)
-            if raw_val == 0.0:  # If raw was zeroed by thresholding
-                norm_val = 0.0
-            normalized_matrix.loc[g1, g2] = norm_val
-
-    return raw_matrix, normalized_matrix
+    return raw_matrix
 
 def identify_actual_directed_edges(rep_0_t1, rep_1_t2, direction_raw_matrix, gene_pairs, threshold=0.01, n_shuffles=10000, n_cores_to_use = 4, verbose = False):
     """

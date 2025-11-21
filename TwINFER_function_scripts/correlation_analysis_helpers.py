@@ -230,11 +230,11 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
         base_names = [i.replace("_", "-") for i in base_names]
         if add_time:
             if len(time) == 1:
-                row_labels = [rf"$\text{{{i}}}_{{{time[0]}}}$" for i in base_names]
+                row_labels = [rf"$\text{{{i}}}_{{t{time[0]}}}$" for i in base_names]
                 col_labels = row_labels
             else:
-                row_labels = [rf"$\text{{{i}}}_{{{time[0]}}}$" for i in base_names]
-                col_labels = [rf"$\text{{{i}}}_{{{time[1]}}}$" for i in base_names]
+                row_labels = [rf"$\text{{{i}}}_{{t{time[0]}}}$" for i in base_names]
+                col_labels = [rf"$\text{{{i}}}_{{t{time[1]}}}$" for i in base_names]
         else:
             row_labels = base_names
             col_labels = base_names
@@ -258,7 +258,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     # --- Handle vmin/vmax auto-scaling ---
     temp_values = plot_matrix.values.copy()
 
-    # Exclude diagonal values only for vmin/vmax estimation
+    # Exclude diagonal values only for vmin/vmax estimation since self_values are being blacked out anyway
     if black_out_self:
         np.fill_diagonal(temp_values, np.nan)
 
@@ -325,8 +325,6 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
                     if i != j:  # avoid drawing twice on diagonal
                         rect2 = Rectangle((i, j), 1, 1, fill=False, edgecolor='black', linewidth=1)
                         ax.add_patch(rect2)
-
-
 
     # --- Title ---
     if title:
