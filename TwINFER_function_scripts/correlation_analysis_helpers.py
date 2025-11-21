@@ -17,6 +17,11 @@ Functions
 extract_param_index(filename: str) -> str
     Extracts the parameter index string (e.g., '0_1') from a simulation file path.
 
+split_and_merge_simulations(simulation_paths: List[str]) -> pd.DataFrame
+    Splits clone IDs as evenly as possible across multiple simulation CSV files,
+    then extracts the assigned clones from each file and merges them into a single
+    combined DataFrame.
+    
 read_input_matrix(path_to_matrix: str) -> Tuple[int, np.ndarray]
     Loads a gene interaction matrix from a file and returns its shape and contents.
 
@@ -38,6 +43,7 @@ print_summary(no_regulation: List[Tuple[str, str]],
 plot_network(correlation_matrix: pd.DataFrame, gene_list: List[str], edges, title: Optional[str] = None)
     Visualizes gene-gene correlations as a directional network graph, using arrows or flat-headed lines
     to indicate inferred directionality or undetermined regulation.
+
 
 Helper Functions
 ----------------
@@ -64,6 +70,8 @@ from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.cm import ScalarMappable
 import networkx as nx
 import seaborn as sns
+import pandas as pd
+from itertools import cycle
 
 def extract_param_index(filename: str) -> str:
     """
@@ -161,6 +169,75 @@ def get_param_data(param_df, param_index, n_genes):
         param_dict[col] = interaction_values[col]
 
     return param_dict
+
+
+def split_and_merge_simulations(simulation_paths):
+    """
+    Split clone IDs evenly across multiple simulations and merge selected clones.
+    
+    This function loads N simulation CSV files, determines the complete set of
+    unique clone IDs in the *first* simulation, splits those clone IDs as evenly
+    as possible across all N simulations, and merges together the corresponding
+    subsets taken from each simulation file.
+
+    Parameters
+    ----------
+    simulation_paths : list of str
+        List of file paths to simulation CSV files.
+        - All files must contain a "clone_id" column.
+        - Assumes the same clone IDs appear in each simulation, but possibly 
+          assigned to different states or having different observations.
+
+    Returns
+    -------
+    pd.DataFrame
+        A concatenated DataFrame containing:
+        - The first 1/N of clone IDs from simulation 1,
+        - The second 1/N of clone IDs from simulation 2,
+        - ...
+        - The last 1/N of clone IDs from simulation N.
+        The order is determined by sorted clone IDs.
+
+    Notes
+    -----
+    - Clone IDs are split *evenly* using integer division. 
+      If the total number of clones is not exactly divisible by N, 
+      the final chunk will contain the remainder.
+    """
+    
+    # Load all simulations
+    sims = [pd.read_csv(path) for path in simulation_paths]
+    num_sims = len(sims)
+
+    # Extract clone IDs from first simulation (assumed consistent)
+    clone_ids = sorted(sims[0]["clone_id"].unique())
+    total_clones = len(clone_ids)
+    
+    # Compute chunk size
+    chunk_size = total_clones // num_sims
+    remainder = total_clones % num_sims
+
+    # Determine clone ID chunks for each simulation
+    clone_chunks = []
+    start = 0
+    for i in range(num_sims):
+        # distribute the remainder one-by-one to early chunks
+        extra = 1 if i < remainder else 0
+        end = start + chunk_size + extra
+        clone_chunks.append(clone_ids[start:end])
+        start = end
+
+    # Merge the subsets
+    merged_df = pd.concat(
+        [
+            sims[i][sims[i]["clone_id"].isin(clone_chunks[i])]
+            for i in range(num_sims)
+        ],
+        ignore_index=True
+    )
+
+    return merged_df
+
 
 def read_input_matrix(path_to_matrix: str) -> (int, np.ndarray):
     """
