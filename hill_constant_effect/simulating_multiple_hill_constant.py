@@ -1,4 +1,6 @@
-# %% [markdown]
+# %% 
+# This is the script to simulate different values of Hill constant as a function of mean estimated protein level. The default is 1.
+
 # # Code to simulate a synthetic GRN and infer the network using TwINFER
 # 
 path_to_data = "/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/hill_constant_effect/"

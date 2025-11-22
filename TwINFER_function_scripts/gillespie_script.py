@@ -494,22 +494,6 @@ def gillespie_simulation_all_cells(update_propensities, update_matrix, pop0_mat,
     n_time = time_points.shape[0] #Number of time points to sample
     n_rxns = update_matrix.shape[0]
     samples = np.empty((n_cells, n_time, n_species), dtype=np.int64)
-    event_log = [
-    {
-        "times": [],
-        "genes": [],
-        "types": []
-    }
-    for _ in range(n_cells)
-    ]
-
-    promoter_A_indices = np.array([
-    species_index["gene_1_A"],
-    species_index["gene_2_A"],
-    species_index["gene_3_A"]
-    ], dtype=np.int32)
-
-    n_genes = promoter_A_indices.size
 
     for cell in prange(n_cells):
         pop = pop0_mat[:, cell].copy()
@@ -549,27 +533,6 @@ def gillespie_simulation_all_cells(update_propensities, update_matrix, pop0_mat,
             cum_props = np.cumsum(prop)
             r = np.searchsorted(cum_props, np.random.rand() * total)
             pop += update_matrix[r]
-            ###########################################################
-            #### PI_ON COUNTING ###################
-                        #### PI_ON COUNTING ###################
-            gene_switched = -1
-
-            for g in range(n_genes):
-                Ai = promoter_A_indices[g]
-                if old_pop[Ai] != pop[Ai]:
-                    gene_switched = g
-                    break
-
-            if gene_switched != -1:
-                event_times.append(t)
-                event_states.append(pop.copy())
-                event_gene.append(gene_switched)
-
-                Ai = promoter_A_indices[gene_switched]
-                if old_pop[Ai] == 0 and pop[Ai] == 1:
-                    event_type.append(1)  # k_on event
-                else:
-                    event_type.append(0)  # k_off event
 
     return samples
 
