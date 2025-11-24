@@ -383,6 +383,7 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
                                           p_val_threshold=0.01,
                                           n_shuffles=10000,
                                           verbose=False,
+                                          return_gene_corr_thresholds = True,
                                           n_cores_to_use = 4):
     """
     Splits gene-gene pairs based on absolute correlation threshold.
@@ -420,7 +421,7 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
         percentile_threshold = (1 - p_val_threshold) * 100
 
     no_regulation, potential_regulation = [], []
-    
+    gene_corr_thresholds = {}
     for gi, gj in all_pairs:
         corr_val = pair_correlations[(gi, gj)]
         current_threshold = threshold
@@ -446,10 +447,11 @@ def check_gene_gene_correlation_threshold(all_t1_t2_measurements,
                 plt.show()
         
         # Classify pairs
+        gene_corr_thresholds[(gi, gj)] = current_threshold
         target_list = potential_regulation if abs(corr_val) > current_threshold else no_regulation
         target_list.append((gi, gj))
     
-    return no_regulation, potential_regulation
+    return no_regulation, potential_regulation, gene_corr_thresholds
 
 def calculate_pair_correlation(rep_0, rep_1, gene_list, type_comparison="twin"):
     """

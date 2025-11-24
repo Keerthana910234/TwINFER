@@ -53,6 +53,8 @@ def infer_with_twinfer(path_to_simulation_file= None,
                         seed = 101010,
                         infer_direction_for_which_edges = "single-state",
                         remove_twin_structure = False,
+                        return_gene_corr_thresholds = False,
+                        match_sim_details = True,
                         n_cores = 4):
     """
     Infer gene regulatory interactions from simulated or experimental twin-cell data
@@ -168,13 +170,15 @@ def infer_with_twinfer(path_to_simulation_file= None,
 
     # Load simulation data
     if merge_to_multiple_states:
-        if (len(path_to_simulation_file) == 1):
-            print("Only one simulation file was provided while merge_to_mulitple_states was set to True. The simulation file will be used as is.")
+        if isinstance(path_to_simulation_file, str):
+            print("Only one simulation file was provided while merge_to_multiple_states was set to True. The file will be used as-is.")
             simulation = pd.read_csv(path_to_simulation_file)
         else:
+            # It must be a list/tuple/etc.
             simulation = split_and_merge_simulations(path_to_simulation_file)
     else:
         simulation = pd.read_csv(path_to_simulation_file)
+
 
     # Load connectivity matrix and parameter set
     path_to_connectivity_matrix = base_config["path_to_connectivity_matrix"]
@@ -185,8 +189,6 @@ def infer_with_twinfer(path_to_simulation_file= None,
     # Assert number of clones in simulation file matches config
     n_clones_simulation = simulation['clone_id'].nunique()
     n_clones_base_config = base_config["n_cells"]
-    assert n_clones_simulation == n_clones_base_config, \
-        "Number of twin pairs in the simulation file does not match n_cells in base_config."
 
     # Assert time points match expected resolution
     time_points_simulations = simulation['time_step'].unique()
@@ -196,27 +198,34 @@ def infer_with_twinfer(path_to_simulation_file= None,
         base_config['twin_measurement_resolution']
     )
 
-    assert set(time_points_simulations) == set(time_points_base_config), \
-        "The sampling time points in the simulation file do not match those specified in base_config."
 
-    # Assert parameter row identity matches
-    param_index_from_file_name = extract_param_index(path_to_simulation_file)
-    param_index_from_base_config = "_".join(map(str, base_config["rows_to_use"][0]))
-    assert param_index_from_file_name == param_index_from_base_config, \
-        f"Simulation parameters ({param_index_from_file_name}) must match the details (parameter rows) in  ({param_index_from_base_config})."
+    if match_sim_details:
+        # Assert parameter row identity matches
+        param_index_from_file_name = extract_param_index(path_to_simulation_file)
+        param_index_from_base_config = "_".join(map(str, base_config["rows_to_use"][0]))
+        assert n_clones_simulation == n_clones_base_config, \
+            "Number of twin pairs in the simulation file does not match n_cells in base_config."
+        assert set(time_points_simulations) == set(time_points_base_config), \
+            "The sampling time points in the simulation file do not match those specified in base_config."
+        assert param_index_from_file_name == param_index_from_base_config, \
+            f"Simulation parameters ({param_index_from_file_name}) must match the details (parameter rows) in  ({param_index_from_base_config})."
 
     # Load gene parameters and connectivity structure
     n_genes, interaction_matrix = read_input_matrix(path_to_connectivity_matrix)
     gene_list = [f"gene_{i}" for i in np.arange(1, n_genes + 1)]
-    gene_params = get_param_data(param_df, param_index_from_file_name, n_genes)
-    print(gene_params)
+    try:
+        gene_params = get_param_data(param_df, param_index_from_file_name, n_genes)
+        print(gene_params)
+    except:
+        gene_params = None
+        print("Could not ascertain corresponding parameter rows to check for gene parameters")
 
     valid_options = ["single-state", "all-edges"]
     if infer_direction_for_which_edges not in valid_options:
         raise ValueError(f"infer_direction_for_which_edges must be one of {valid_options}, got '{infer_direction_for_which_edges}'")
         
     # --- Check for steady state at t1 (optional) ---
-    if check_for_steady_state:
+    if check_for_steady_state and match_sim_details:
         is_system_in_steady_state = check_system_in_steady_state(simulation, gene_params, interaction_matrix, gene_list,
                                   relative_diff_threshold=0.01, relative_slope_threshold=0.01)
         if not is_system_in_steady_state:
@@ -297,17 +306,18 @@ def infer_with_twinfer(path_to_simulation_file= None,
         pairwise_gene_gene_correlation_matrix = calculate_pairwise_gene_gene_correlation_matrix(
             all_t1_t2_measurements, gene_list
         )
-        no_regulation, potential_regulation = check_gene_gene_correlation_threshold(
+        no_regulation, potential_regulation, gene_corr_thresholds  = check_gene_gene_correlation_threshold(
             all_t1_t2_measurements, pairwise_gene_gene_correlation_matrix, gene_list,  threshold = threshold_gene_gene_corr, use_scramble = True, 
-            p_val_threshold = p_val_threshold_scrambled_gene_correlation, verbose = show_scrambled_distribution_gene_correlation, n_cores_to_use = n_cores
+            p_val_threshold = p_val_threshold_scrambled_gene_correlation, verbose = show_scrambled_distribution_gene_correlation, n_cores_to_use = n_cores, return_gene_corr_thresholds = return_gene_corr_thresholds
         )
     else:
         pairwise_gene_gene_correlation_matrix = calculate_pairwise_gene_gene_correlation_matrix(
             all_t2_measurements, gene_list
         )
-        no_regulation, potential_regulation = check_gene_gene_correlation_threshold(
+           
+        no_regulation, potential_regulation, gene_corr_thresholds = check_gene_gene_correlation_threshold(
             all_t2_measurements, pairwise_gene_gene_correlation_matrix, gene_list,  threshold = threshold_gene_gene_corr, use_scramble = True, 
-            p_val_threshold = p_val_threshold_scrambled_gene_correlation, verbose = show_scrambled_distribution_gene_correlation, n_cores_to_use = n_cores
+            p_val_threshold = p_val_threshold_scrambled_gene_correlation, verbose = show_scrambled_distribution_gene_correlation, n_cores_to_use = n_cores, return_gene_corr_thresholds = return_gene_corr_thresholds
         )
     # print(no_regulation)
     if plot_correlation_matrices_as_heatmap:
@@ -417,7 +427,7 @@ def infer_with_twinfer(path_to_simulation_file= None,
             if i != j and (i, j) not in final_directed_edges:
                 direction_matrix.loc[i,j] = 0
     try:
-        return {
+        result =  {
             "all_gene_pairs": all_gene_pairs,
             "final_directed_edges": final_directed_edges,
             "direction_matrix": direction_matrix, 
@@ -428,7 +438,7 @@ def infer_with_twinfer(path_to_simulation_file= None,
             "random_pair_correlation_matrix_t1": random_pair_correlation_matrix_t2
         }
     except:
-        return {
+        result = {
             "all_gene_pairs": all_gene_pairs,
             "final_directed_edges": None,
             "direction_matrix": None, 
@@ -438,3 +448,6 @@ def infer_with_twinfer(path_to_simulation_file= None,
             "twin_pair_correlation_matrix_t1": twin_pair_correlation_matrix_t1,
             "random_pair_correlation_matrix_t1": random_pair_correlation_matrix_t2,
         }
+    if return_gene_corr_thresholds:
+        result['gene_corr_thresholds'] = gene_corr_thresholds
+    return result
