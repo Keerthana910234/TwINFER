@@ -221,6 +221,70 @@ def generate_initial_state_from_genes(gene_list):
         ]
     return pd.DataFrame(states)
 
+def assign_k_values_matrix(gene_list, connectivity_matrix, param_dict, K_to_use):
+    """
+    Assign k-values for every regulatory interaction using a K matrix.
+
+    Parameters
+    ----------
+    gene_list : list of gene names
+    connectivity_matrix : numpy array (n_genes x n_genes)
+        Nonzero entries indicate regulatory edges.
+    param_dict : dict
+        Dictionary where {k_src_to_tgt} keys will be replaced.
+    K_to_use : numpy array (n_genes x n_genes)
+        K-value matrix, where K_to_use[i, j] is K(src -> tgt).
+
+    Returns
+    -------
+    param_dict : updated dict with new {k_src_to_tgt} values.
+    """
+
+    n_genes = len(gene_list)
+    K_to_use = np.asarray(K_to_use, dtype=float)
+
+    # -----------------------------------------------------------
+    # 1) Validate matrix shape
+    # -----------------------------------------------------------
+    if K_to_use.shape != (n_genes, n_genes):
+        raise ValueError(
+            f"K_to_use must have shape ({n_genes},{n_genes}), "
+            f"but got {K_to_use.shape}"
+        )
+
+    # -----------------------------------------------------------
+    # 2) Validate that every TRUE edge has a specified K value
+    # -----------------------------------------------------------
+    for i in range(n_genes):
+        for j in range(n_genes):
+            if connectivity_matrix[i, j] != 0:
+                if np.isnan(K_to_use[i, j]):
+                    raise ValueError(
+                        f"K-value missing (NaN) for interaction "
+                        f"{gene_list[i]} -> {gene_list[j]} at index [{i},{j}]"
+                    )
+
+                if K_to_use[i, j] <= 0:
+                    raise ValueError(
+                        f"K-value for {gene_list[i]} -> {gene_list[j]} "
+                        f"must be > 0, got {K_to_use[i, j]}"
+                    )
+
+    # -----------------------------------------------------------
+    # 3) Assign K-values into param_dict
+    # -----------------------------------------------------------
+    protein_levels = []
+    for i, src in enumerate(gene_list):
+        for j, tgt in enumerate(gene_list):
+
+            if connectivity_matrix[i, j] != 0:
+                key = f"{{k_{src}_to_{tgt}}}"
+                param_dict[key] = float(K_to_use[i, j])
+                protein_levels.append(float(K_to_use[i, j]))
+    print("Assigned K from input matrix.")
+    print(param_dict)
+    return np.array(protein_levels), param_dict
+
 def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list,
                                       target_hill=0.5, scale_k=None):
     """
@@ -236,7 +300,7 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
             (positive for activation, negative for repression).
         gene_list (list): List of gene names corresponding to the rows and columns 
             of the connectivity matrix.
-        target_hill (float, optional): Hill coefficient used to scale regulatory 
+        target_hill (float, optional): Hill function value used to scale regulatory 
             effects. Default is 0.5.
         scale_k (numpy.ndarray, optional): Scaling matrix for rate constants. If 
             None, defaults to a matrix of ones with the same dimensions as the 
@@ -251,7 +315,7 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
         - The function calculates steady-state protein levels based on burst 
           probabilities and production/degradation rates.
         - Regulatory effects are computed using the connectivity matrix and scaled 
-          by the target Hill coefficient (default is 0.5).
+          by the target Hill function value (default is 0.5).
         - Rate constants (k values) are assigned based on steady-state protein 
           levels and multiplied by the scaling matrix.
     """
@@ -315,7 +379,7 @@ def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
             - protein_levels (numpy.ndarray): Array of steady-state protein levels 
               for each gene.
             - param_dict (dict): Updated dictionary with assigned rate constants 
-              (k values) for gene intera
+              (k values) for gene interactions
     Notes:
         - The function calculates steady-state protein levels based on burst 
           probabilities and production/degradation rates.
@@ -360,7 +424,7 @@ def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
     return protein_levels, param_dict
 
 def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
-                          n_matrix=None, k_add_matrix=None, scale_k=None):
+                          n_matrix=None, k_add_matrix=None, scale_k=None, use_given_K = None, K_to_use = None):
     """
     Adds interaction terms to the parameter dictionary based on the connectivity matrix 
     and gene list, and calculates steady-state paramet
@@ -399,7 +463,10 @@ def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                 param_dict[f"{{n_{edge}}}"]     = float(n_matrix[i,j])
                 param_dict[f"{{k_add_{edge}}}"] = float(k_add_matrix[i,j])
     # print(f"param_dict before steady state calc: {param_dict}")
-    return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
+    if use_given_K and K_to_use:
+        return assign_k_values_matrix(gene_list, connectivity_matrix, param_dict, K_to_use)
+    else:
+        return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
 
 def setup_gillespie_params_from_reactions(init_states: pd.DataFrame,
                                           reactions: pd.DataFrame,
@@ -961,10 +1028,14 @@ def process_param_set(rows, label, base_config):
     # k_add_matrix   = base_config['k_add_matrix']
     # n_matrix       = base_config['n_matrix']
     time_points    = np.arange(0, base_config['simulation_time_before_division'], 1)
-    sample_twins_time_points    = np.arange(0, base_config['twin_simulation_time_after_division'] + base_config['twin_measurement_resolution'], base_config['twin_measurement_resolution']) 
-    n_cells        = base_config['n_cells']
+    sample_twins_time_points = np.arange(0, base_config['twin_simulation_time_after_division'] + base_config['twin_measurement_resolution'], base_config['twin_measurement_resolution']) 
+    n_cells = base_config['n_cells']
     scale_k = base_config.get("scale_k", None)
     log_pi_on = base_config.get("log_pi_on", False)
+    use_given_K = base_config.get("use_given_K", False)
+    K_to_use = base_config.get("K_to_use", None)
+    if use_given_K and K_to_use:
+        print("Using given hill Constants.")
     print(f"Log pi on is set to {log_pi_on}")
     # Build reactions and parameters for this row set
     n_genes, connectivity_matrix = read_input_matrix(path_to_connectivity_matrix)
@@ -991,7 +1062,7 @@ def process_param_set(rows, label, base_config):
     print("Done until addition of interaction terms")
     steady_state, full_param_dict = add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                                                           n_matrix=n_matrix,
-                                                          k_add_matrix=k_add_matrix, scale_k=scale_k)
+                                                          k_add_matrix=k_add_matrix, scale_k=scale_k, use_given_K = use_given_K, K_to_use = K_to_use)
     print(full_param_dict)
     pop0, update_matrix, update_prop, species_index = setup_gillespie_params_from_reactions(
         init_states, reactions_df, full_param_dict)
@@ -1023,11 +1094,15 @@ def process_param_set(rows, label, base_config):
     final_states = base_samples[:, -1, :]
     del base_samples
     gc.collect()
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+    id = uuid.uuid4().hex[:8]
+    prefix = f"{label}_{timestamp}_ncells_{n_cells}_{base_config['type']}_{id}"
+    df_base.to_csv(f"{base_config['output_folder']}/simulation_before_division_df_{prefix}.csv", index=False)
+
     rep_time = sample_twins_time_points
     pop0_rep = np.concatenate([final_states.T, final_states.T], axis=1)
     verbose_flags = np.zeros(2*n_cells, dtype=np.int64)
-    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
-    id = uuid.uuid4().hex[:8]
+
     if log_pi_on:
         # ---- allocate logging lists outside numba ----
         event_times_all, event_genes_all, event_states_all = allocate_event_logs(2 * n_cells)
@@ -1069,11 +1144,9 @@ def process_param_set(rows, label, base_config):
     # 4) Save
     # timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
     # id = uuid.uuid4().hex[:8]
-    prefix = f"{label}_{timestamp}_ncells_{n_cells}_{base_config['type']}_{id}"
-    df_rep.to_csv(f"{base_config['output_folder']}/df_{prefix}.csv", index=False)
     # np.savetxt(f"{base_config['output_folder']}/samples_{prefix}.csv", rep_samples.reshape(2*n_cells, -1), delimiter=",")
-    if flag:
-        df_base.to_csv(f"{base_config['output_folder']}/simulation_before_division_df_{prefix}.csv", index=False)
+    df_rep.to_csv(f"{base_config['output_folder']}/df_{prefix}.csv", index=False)
+
     record = {
         "id": id,
         "rows": rows,
@@ -1155,6 +1228,9 @@ if __name__ == "__main__":
     parser.add_argument("--scale_k", type=str, default=None, required=False, help="The matrix of values to scale Hill constant K for each interaction. "
                         "Provide as string representation of nested list, e.g., '[[0,1],[0,0]]'. "
                         "Default is matrix of 1s for all interactions.")    
+    parser.add_argument("--use_given_K", type=bool, default=None, required=False, help="The matrix of values to scale Hill constant K for each interaction. "
+                        "Provide as string representation of nested list, e.g., '[[0,1],[0,0]]'. "
+                        "Default is matrix of 1s for all interactions.")    
     
     args = parser.parse_args()
 
@@ -1174,6 +1250,8 @@ if __name__ == "__main__":
     base_config["twin_simulation_time_after_division"] = args.twin_simulation_time_after_division
     base_config["twin_measurement_resolution"] = args.twin_measurement_resolution
     base_config['scale_k'] = args.scale_k
+    base_config['use_given_K'] = args.use_given_K
+    base_config['K_to_use'] = args.K_to_use
 
     os.makedirs(base_config["output_folder"], exist_ok = True)
     try:

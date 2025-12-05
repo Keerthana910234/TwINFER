@@ -337,11 +337,11 @@ def infer_with_twinfer(path_to_simulation_file= None,
     # print(twin_pair_correlation_matrix_t2)
     if plot_correlation_matrices_as_heatmap:
         plot_matrix_as_heatmap( corr_matrix=twin_pair_correlation_matrix_t1, gene_list=gene_list, no_regulation=no_regulation, potential_regulation=potential_regulation,
-            title=f"Twin pair correlations at time {t1}h", add_gene_labels=True, add_time=True, time=[t1], gray_out_no_reg=True, black_out_self = True
+            title=f"Twin pair correlations at time {t1}h", add_gene_labels=True, add_time=True, time=[t1], gray_out_no_reg=True, black_out_self = True, symmetric = True
         )
         
         plot_matrix_as_heatmap( corr_matrix=random_pair_correlation_matrix_t2, gene_list=gene_list, no_regulation=no_regulation, potential_regulation=potential_regulation,
-            title=f"Random pair correlations across both time points", add_gene_labels=True, add_time=False, time=[t1], gray_out_no_reg=True, black_out_self = True
+            title=f"Random pair correlations across both time points", add_gene_labels=True, add_time=False, time=[t1], gray_out_no_reg=True, black_out_self = True, symmetric = True
         )
 
     # --- Step 3: Classify regulation type: single-state vs multiple-states ---
@@ -376,13 +376,17 @@ def infer_with_twinfer(path_to_simulation_file= None,
     # --- Step 5: Infer directionality of single-state interactions ---
     if infer_direction_for_which_edges == "single-state" :
         if len(single_state_regulation) > 0:
-            single_state_regulation_list = {g for pair in single_state_regulation for g in pair}
+            bidirectional_pairs = {(a, b) for (a, b) in single_state_regulation} | \
+                      {(b, a) for (a, b) in single_state_regulation}
 
-            # Build self-pairs
-            self_pairs = [(g, g) for g in single_state_regulation_list]
+            # Add self-pairs
+            genes = {g for pair in single_state_regulation for g in pair}
+            self_pairs = {(g, g) for g in genes}
 
-            # Append them
-            all_gene_pairs = single_state_regulation + self_pairs
+            # Final
+            all_gene_pairs = bidirectional_pairs | self_pairs
+            all_gene_pairs = list(all_gene_pairs)
+
             direction_matrix = get_cross_correlations(across_t_twin1, across_t_twin2, gene_pairs=all_gene_pairs)
             
             final_directed_edges = identify_actual_directed_edges(across_t_twin1, across_t_twin2, direction_matrix, gene_pairs=all_gene_pairs, threshold = p_value_threshold_cross_correlation, n_cores_to_use = n_cores, verbose = True)
@@ -400,6 +404,7 @@ def infer_with_twinfer(path_to_simulation_file= None,
     # print(pre_threshold_direction_matrix)
 
     if plot_correlation_matrices_as_heatmap:
+        gene_list = list(direction_matrix.columns)
         no_reg_pairs = [pair for pair in all_gene_pairs if pair not in final_directed_edges]
         plot_matrix_as_heatmap(
             corr_matrix=direction_matrix,
@@ -411,17 +416,18 @@ def infer_with_twinfer(path_to_simulation_file= None,
             add_time=True,
             time=[t1, t2],
             gray_out_no_reg=True,
-            black_out_self = True
+            black_out_self = True,
+            symmetric = False
         )
 
     # --- Step 6: Visualize the inferred network ---
-    if (len(single_state_regulation) >= 0):
-        if have_any_output:
-            if (len(final_directed_edges) > 0):
-                plot_network(direction_matrix, gene_list, final_directed_edges)
-            else:
-                plot_network(direction_matrix, gene_list, final_directed_edges)
-    
+    # if (len(single_state_regulation) >= 0):
+    #     if have_any_output:
+    #         if (len(final_directed_edges) > 0):
+    #             plot_network(direction_matrix, gene_list, final_directed_edges)
+    #         else:
+    #             plot_network(direction_matrix, gene_list, final_directed_edges)
+    unfiltered_direction_matrix = direction_matrix
     for i in direction_matrix.index:
         for j in direction_matrix.columns:
             if i != j and (i, j) not in final_directed_edges:
@@ -431,6 +437,7 @@ def infer_with_twinfer(path_to_simulation_file= None,
             "all_gene_pairs": all_gene_pairs,
             "final_directed_edges": final_directed_edges,
             "direction_matrix": direction_matrix, 
+            "unfiltered_direction_matrix": unfiltered_direction_matrix, 
             "pairwise_gene_gene_correlation_matrix": pairwise_gene_gene_correlation_matrix,
             "twin_pair_correlation_matrix_t2": twin_pair_correlation_matrix_t2,
             "random_pair_correlation_matrix_t2": random_pair_correlation_matrix_t2,
@@ -442,6 +449,7 @@ def infer_with_twinfer(path_to_simulation_file= None,
             "all_gene_pairs": all_gene_pairs,
             "final_directed_edges": None,
             "direction_matrix": None, 
+            "unfiltered_direction_matrix": None, 
             "pairwise_gene_gene_correlation_matrix": pairwise_gene_gene_correlation_matrix,
             "random_pair_correlation_matrix_t2": random_pair_correlation_matrix_t2,
             "twin_pair_correlation_matrix_t2": twin_pair_correlation_matrix_t2,

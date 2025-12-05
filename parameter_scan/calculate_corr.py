@@ -59,7 +59,6 @@ def spearman_safe(x, y):
 # =============================
 # Core correlation helpers
 # =============================
-
 def calculate_pairwise_gene_gene_correlation_matrix(df, gene_list):
     mat = pd.DataFrame(np.nan, index=gene_list, columns=gene_list)
     X = df[gene_list].values.T
@@ -491,6 +490,7 @@ def process_simulation(
     # --- Apply mapping ONLY to replicate 2 ---
     mask_rep2 = df["replicate"] == 2
     df.loc[mask_rep2, "clone_id"] = df.loc[mask_rep2, "clone_id"].map(shuffle_map)
+    df = df.sort_values(["replicate", "clone_id"]).reset_index(drop=True)
 
     #############################
     # REMOVE TWIN STRUCTURE
@@ -639,7 +639,9 @@ def run_pipeline(path_to_simulations, output_folder, genes, time_points,
         raise ValueError("No simulation CSV files found!")
 
     rng = np.random.default_rng(seed)
-
+    os.makedirs(output_folder, exist_ok=True)
+    gene_list = list(genes)
+    
     # === PAIR MODE: Two-state selection ===
     if mode == "pair":
         if csv_path:
@@ -692,7 +694,7 @@ def run_pipeline(path_to_simulations, output_folder, genes, time_points,
                     bm1 = brunnermunzel(df_a["gene_1_protein"], df_b["gene_1_protein"], nan_policy="omit")
                     bm2 = brunnermunzel(df_a["gene_2_protein"], df_b["gene_2_protein"], nan_policy="omit")
 
-                    if (bm1.pvalue < p_threshold) or (bm2.pvalue < p_threshold):
+                    if (bm1.pvalue < p_threshold) and (bm2.pvalue < p_threshold):
                         pairs.add(key)
                         if len(pairs) % save_every == 0:
                             print(f"  → {len(pairs)} two-state pairs accepted after {attempts} attempts")
@@ -713,10 +715,8 @@ def run_pipeline(path_to_simulations, output_folder, genes, time_points,
         print(f"Found {len(files)} single simulations.")
 
     # === Batch processing ===
-    os.makedirs(output_folder, exist_ok=True)
-    gene_list = list(genes)
-    all_rows, chunk_id = [], 0
 
+    all_rows, chunk_id = [], 0
     for i in range(0, len(work_items), batch_size):
         batch = work_items[i:min(i + batch_size, len(work_items))]
         print(f"[batch] {i}..{i + len(batch) - 1}")

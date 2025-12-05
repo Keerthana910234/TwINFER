@@ -302,6 +302,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     # Format gene names: gene_1 → g1
     base_names =  gene_list
 
+
     # Format axis labels
     if add_gene_labels:
         base_names = [i.replace("_", "-") for i in base_names]
@@ -321,7 +322,11 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
 
     # Prepare plot matrix
     plot_matrix = corr_matrix.copy()
-
+    if symmetric:
+        # --- Symmetrize matrix by taking whichever side is non-zero ---
+        A = plot_matrix.values
+        sym_A = np.where(A != 0, A, A.T)     # fill from transposed when zero
+        plot_matrix = pd.DataFrame(sym_A, index=plot_matrix.index, columns=plot_matrix.columns)
     # --- Handle masking ---
     mask = np.zeros_like(plot_matrix.values, dtype=bool)
     if gray_out_no_reg and no_regulation:
@@ -361,7 +366,7 @@ def plot_matrix_as_heatmap(corr_matrix, gene_list, no_regulation=None, potential
     else:
         norm = None
         if cmap is None:
-            cmap = "Blues" if vmin >= 0 else "Reds"
+            cmap = "Blues_r" if vmin >= 0 else "Reds_r"
 
     # --- Plot heatmap ---
     fig, ax = plt.subplots(figsize=figsize_input)
@@ -805,7 +810,3 @@ def plot_network(correlation_matrix, gene_list, edges, title=None):
 
     plt.tight_layout()
     plt.show()
-
-
-
-

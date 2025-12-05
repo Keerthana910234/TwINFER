@@ -95,7 +95,8 @@ def assign_parameters_to_genes(csv_path, gene_list, rows=None):
     return param_dict
 
 
-def generate_reaction_network_from_matrix(connectivity_matrix: np.ndarray):
+def generate_reaction_network_from_matrix(connectivity_matrix: np.ndarray,
+                                          multiple_interaction_type:str = "additive"):
     """
     Generate a reaction network from a given connectivity matrix.
 
@@ -131,7 +132,9 @@ def generate_reaction_network_from_matrix(connectivity_matrix: np.ndarray):
     """
     n_genes = connectivity_matrix.shape[0]
     gene_list = [f"gene_{i+1}" for i in range(n_genes)]
-    prop = {
+
+    if multiple_interaction_type == "additive":
+        prop = {
         "regulatory": "(({sign}*{k_add})*({tf}_protein**{n})/({k}**{n}+{tf}_protein**{n}))*{curr_gene}_I",
         "activation": "{k_on}*{curr_gene}_I",
         "inactivation": "{k_off}*{curr_gene}_A",
@@ -139,51 +142,384 @@ def generate_reaction_network_from_matrix(connectivity_matrix: np.ndarray):
         "mRNA_deg": "{k_deg_mRNA}*{curr_gene}_mRNA",
         "protein_prod": "{k_prod_protein}*{curr_gene}_mRNA",
         "protein_deg": "{k_deg_protein}*{curr_gene}_protein"
-    }
-
-    reactions = []
-    for j, curr_gene in enumerate(gene_list):
-        param = lambda k: f"{{{k}_{curr_gene}}}"
-        # activation
-        expr = prop["activation"].replace("{k_on}", param("k_on")).replace("{curr_gene}", curr_gene)
-        reactions.append({"species1":f"{curr_gene}_A","change1":1,
-                        "species2":f"{curr_gene}_I","change2":-1,
-                        "propensity":expr,"time":"-"})
-        # regulation
-        regulators_index = np.where(connectivity_matrix[:,j]!=0)[0]
-        for i in regulators_index:
-            regulator = gene_list[i]
-            sign = int(np.sign(connectivity_matrix[i,j]))
-            edge = f"{regulator}_to_{curr_gene}"
-            expr = prop["regulatory"]\
-                .replace("{sign}",str(sign))\
-                .replace("{k_add}",f"{{k_add_{edge}}}")\
-                .replace("{n}",f"{{n_{edge}}}")\
-                .replace("{k}",f"{{k_{edge}}}")\
-                .replace("{tf}",regulator)\
-                .replace("{curr_gene}",curr_gene)
+        }
+        reactions = []
+        for j, curr_gene in enumerate(gene_list):
+            param = lambda k: f"{{{k}_{curr_gene}}}"
+            # activation
+            expr = prop["activation"].replace("{k_on}", param("k_on")).replace("{curr_gene}", curr_gene)
             reactions.append({"species1":f"{curr_gene}_A","change1":1,
                             "species2":f"{curr_gene}_I","change2":-1,
                             "propensity":expr,"time":"-"})
-    
-        # inactivation
-        expr = prop["inactivation"].replace("{k_off}",param("k_off")).replace("{curr_gene}",curr_gene)
-        reactions.append({"species1":f"{curr_gene}_I","change1":1,
-                        "species2":f"{curr_gene}_A","change2":-1,
-                        "propensity":expr,"time":"-"})
-        # production/degradation
-        for label,suffix,chg in [
-            ("mRNA_prod","mRNA",1),("mRNA_deg","mRNA",-1),
-            ("protein_prod","protein",1),("protein_deg","protein",-1)
-        ]:
-            expr = prop[label].replace("{curr_gene}",curr_gene)
-            for k in ["k_prod_mRNA","k_deg_mRNA","k_prod_protein","k_deg_protein"]:
-                expr = expr.replace(f"{{{k}}}",param(k))
-            reactions.append({"species1":f"{curr_gene}_{suffix}","change1":chg,
-                            "species2":"-","change2":"-",
+            # regulation
+            regulators_index = np.where(connectivity_matrix[:,j]!=0)[0]
+            for i in regulators_index:
+                regulator = gene_list[i]
+                sign = int(np.sign(connectivity_matrix[i,j]))
+                edge = f"{regulator}_to_{curr_gene}"
+                expr = prop["regulatory"]\
+                    .replace("{sign}",str(sign))\
+                    .replace("{k_add}",f"{{k_add_{edge}}}")\
+                    .replace("{n}",f"{{n_{edge}}}")\
+                    .replace("{k}",f"{{k_{edge}}}")\
+                    .replace("{tf}",regulator)\
+                    .replace("{curr_gene}",curr_gene)
+                reactions.append({"species1":f"{curr_gene}_A","change1":1,
+                                "species2":f"{curr_gene}_I","change2":-1,
+                                "propensity":expr,"time":"-"})
+        
+            # inactivation
+            expr = prop["inactivation"].replace("{k_off}",param("k_off")).replace("{curr_gene}",curr_gene)
+            reactions.append({"species1":f"{curr_gene}_I","change1":1,
+                            "species2":f"{curr_gene}_A","change2":-1,
                             "propensity":expr,"time":"-"})
+            # production/degradation
+            for label,suffix,chg in [
+                ("mRNA_prod","mRNA",1),("mRNA_deg","mRNA",-1),
+                ("protein_prod","protein",1),("protein_deg","protein",-1)
+            ]:
+                expr = prop[label].replace("{curr_gene}",curr_gene)
+                for k in ["k_prod_mRNA","k_deg_mRNA","k_prod_protein","k_deg_protein"]:
+                    expr = expr.replace(f"{{{k}}}",param(k))
+                reactions.append({"species1":f"{curr_gene}_{suffix}","change1":chg,
+                                "species2":"-","change2":"-",
+                                "propensity":expr,"time":"-"})
+    # elif multiple_interaction_type == "and":
+    #     prop = {
+    #     "regulatory": "({tf}_protein**{n}) / ({k}**{n} + {tf}_protein**{n})",
+    #     "activation": "{k_on}*{curr_gene}_I",
+    #     "inactivation": "{k_off}*{curr_gene}_A",
+    #     "mRNA_prod": "{k_prod_mRNA}*{curr_gene}_A",
+    #     "mRNA_deg": "{k_deg_mRNA}*{curr_gene}_mRNA",
+    #     "protein_prod": "{k_prod_protein}*{curr_gene}_mRNA",
+    #     "protein_deg": "{k_deg_protein}*{curr_gene}_protein"
+    #     }
+
+    #     reactions = []
+    #     for j, curr_gene in enumerate(gene_list):
+    #         param = lambda k: f"{{{k}_{curr_gene}}}"
+    #         # activation
+    #         expr = prop["activation"].replace("{k_on}", param("k_on")).replace("{curr_gene}", curr_gene)
+    #         reactions.append({"species1":f"{curr_gene}_A","change1":1,
+    #                         "species2":f"{curr_gene}_I","change2":-1,
+    #                         "propensity":expr,"time":"-"})
+    #         # regulation
+    #         regulators_index = np.where(connectivity_matrix[:, j] != 0)[0]
+
+    #         # We will build an expression like: term1 * term2 / term3 * term4 / term5 ...
+    #         numerator_terms = []
+    #         denominator_terms = []
+    #         k_add_terms = []
+    #         count = 0
+
+    #         for i in regulators_index:
+    #             count += 1
+    #             regulator = gene_list[i]
+    #             sign = int(np.sign(connectivity_matrix[i, j]))
+
+    #             edge = f"{regulator}_to_{curr_gene}"
+
+    #             # k_add symbolic placeholder
+    #             k_add_terms.append(f"{{k_add_{edge}}}")
+
+    #             # Hill expression with regulator-specific parameters
+    #             expr = (
+    #                 prop["regulatory"]
+    #                 .replace("{n}", f"{{n_{edge}}}")
+    #                 .replace("{k}", f"{{k_{edge}}}")
+    #                 .replace("{tf}", regulator)
+    #                 .replace("{curr_gene}", curr_gene)
+    #             )
+
+    #             if sign == 1:
+    #                 numerator_terms.append(f"({expr})")
+    #             elif sign == -1:
+    #                 denominator_terms.append(f"({expr})")
+
+    #         # ==== Build geometric means ====
+
+    #         N = count  # number of regulators
+
+    #         # Hill numerator geometric mean
+    #         if numerator_terms:
+    #             numerator_expr = " * ".join(numerator_terms)
+    #             numerator_expr = f"({numerator_expr})**(1/{N})"
+    #         else:
+    #             numerator_expr = "1.0"
+
+    #         # Hill denominator geometric mean
+    #         if denominator_terms:
+    #             denominator_expr = " * ".join(denominator_terms)
+    #             denominator_expr = f"({denominator_expr})**(1/{N})"
+    #         else:
+    #             denominator_expr = "1.0"
+
+    #         # ==== Combine numerator & denominator ====
+
+    #         if numerator_terms and denominator_terms:
+    #             final_expr = f"{numerator_expr} / {denominator_expr}"
+    #         elif numerator_terms:
+    #             final_expr = numerator_expr
+    #         elif denominator_terms:
+    #             final_expr = f"1.0 / {denominator_expr}"
+    #         else:
+    #             final_expr = "1.0"
+
+    #         # ==== Geometric mean of all k_add values ====
+
+    #         if k_add_terms:
+    #             k_add_product = " * ".join(k_add_terms)
+    #             k_add_geom = f"({k_add_product})**(1/{N})"
+    #             final_expr = f"{k_add_geom} * ({final_expr})"
+
+                
+    #         # Add the reaction
+    #         reactions.append({
+    #             "species1": f"{curr_gene}_A",
+    #             "change1": 1,
+    #             "species2": f"{curr_gene}_I",
+    #             "change2": -1,
+    #             "propensity": final_expr,
+    #             "time": "-"
+    #         })
+
+    #         # inactivation
+    #         expr = prop["inactivation"].replace("{k_off}",param("k_off")).replace("{curr_gene}",curr_gene)
+    #         reactions.append({"species1":f"{curr_gene}_I","change1":1,
+    #                         "species2":f"{curr_gene}_A","change2":-1,
+    #                         "propensity":expr,"time":"-"})
+    #         # production/degradation
+    #         for label,suffix,chg in [
+    #             ("mRNA_prod","mRNA",1),("mRNA_deg","mRNA",-1),
+    #             ("protein_prod","protein",1),("protein_deg","protein",-1)
+    #         ]:
+    #             expr = prop[label].replace("{curr_gene}",curr_gene)
+    #             for k in ["k_prod_mRNA","k_deg_mRNA","k_prod_protein","k_deg_protein"]:
+    #                 expr = expr.replace(f"{{{k}}}",param(k))
+    #             reactions.append({"species1":f"{curr_gene}_{suffix}","change1":chg,
+    #                             "species2":"-","change2":"-",
+    #                             "propensity":expr,"time":"-"})
+    elif multiple_interaction_type == "and":
+        prop = {
+            "regulatory": "({tf}_protein**{n}) / ({k}**{n} + {tf}_protein**{n})",
+            "activation": "{k_on}*{curr_gene}_I",
+            "inactivation": "{k_off}*{curr_gene}_A",
+            "mRNA_prod": "{k_prod_mRNA}*{curr_gene}_A",
+            "mRNA_deg": "{k_deg_mRNA}*{curr_gene}_mRNA",
+            "protein_prod": "{k_prod_protein}*{curr_gene}_mRNA",
+            "protein_deg": "{k_deg_protein}*{curr_gene}_protein"
+            }
+        reactions = []
+        for j, curr_gene in enumerate(gene_list):
+            param = lambda k: f"{{{k}_{curr_gene}}}"
+            # activation
+            expr = prop["activation"].replace("{k_on}", param("k_on")).replace("{curr_gene}", curr_gene)
+            reactions.append({"species1":f"{curr_gene}_A","change1":1,
+                            "species2":f"{curr_gene}_I","change2":-1,
+                            "propensity":expr,"time":"-"})
+            # regulation
+            regulators_index = np.where(connectivity_matrix[:, j] != 0)[0]
+            # inactivation
+            expr = prop["inactivation"].replace("{k_off}",param("k_off")).replace("{curr_gene}",curr_gene)
+            reactions.append({"species1":f"{curr_gene}_I","change1":1,
+                            "species2":f"{curr_gene}_A","change2":-1,
+                            "propensity":expr,"time":"-"})
+            # production/degradation
+            for label,suffix,chg in [
+                ("mRNA_prod","mRNA",1),("mRNA_deg","mRNA",-1),
+                ("protein_prod","protein",1),("protein_deg","protein",-1)
+            ]:
+                expr = prop[label].replace("{curr_gene}",curr_gene)
+                for k in ["k_prod_mRNA","k_deg_mRNA","k_prod_protein","k_deg_protein"]:
+                    expr = expr.replace(f"{{{k}}}",param(k))
+                reactions.append({"species1":f"{curr_gene}_{suffix}","change1":chg,
+                                "species2":"-","change2":"-",
+                                "propensity":expr,"time":"-"})
+            # Collect regulator-specific symbols
+            protein_terms = []      # p_i^n
+            K_terms = []            # K_i
+            k_add_list = []         # list of all k_add placeholders
+
+            for i in regulators_index:
+                regulator = gene_list[i]
+                edge = f"{regulator}_to_{curr_gene}"
+                expr = (
+                    prop["regulatory"]
+                    .replace("{n}", f"{{n_{edge}}}")
+                    .replace("{k}", f"{{k_{edge}}}")
+                    .replace("{tf}", regulator)
+                    .replace("{curr_gene}", curr_gene)
+                )
+                # protein_i^n
+                protein_terms.append(f"{regulator}_protein**{{n_{edge}}}")
+
+
+                # K_i (not K_i^n yet)
+                K_terms.append(f"{{k_{edge}}}**{{n_{edge}}}")
+
+                # collect k_add
+                k_add_list.append(f"{{k_add_{edge}}}")
+
+            # -------------------------------------------------------
+            # Construct numerator = (p1^n * p2^n * ...)
+            # -------------------------------------------------------
+            numerator = " * ".join(protein_terms)
+
+            # -------------------------------------------------------
+            # Construct combined K product = (K1 * K2 * ...)^n
+            # -------------------------------------------------------
+            K_product = " * ".join(K_terms)
+
+            # -------------------------------------------------------
+            # Construct denominator = (K1*K2)^n + (p1^n * p2^n)
+            # -------------------------------------------------------
+            denominator = f"{K_product} + ({numerator})"
+
+            # -------------------------------------------------------
+            # Maximum k_add term
+            # -------------------------------------------------------
+            if k_add_list:
+                # always include a 0 to guarantee valid max() arguments
+                k_add_max = f"max(0, {', '.join(k_add_list)})"
+            else:
+                # no regulators → k_add_max = 0 (no regulation)
+                k_add_max = "0"
+
+            # -------------------------------------------------------
+            # Final AND-gate expression
+            # -------------------------------------------------------
+            if len(regulators_index)>0:
+                final_expr = f"{k_add_max} * (({numerator}) / ({denominator}))"
+            else:
+                final_expr = "0"
+
+            # Append reaction
+            reactions.append({
+                "species1": f"{curr_gene}_A",
+                "change1": 1,
+                "species2": f"{curr_gene}_I",
+                "change2": -1,
+                "propensity": final_expr,
+                "time": "-"
+            })
+
+    elif multiple_interaction_type == "or":
+        prop = {
+        "regulatory": "({tf}_protein**{n}) / ({k}**{n} + {tf}_protein**{n})",
+        "activation": "{k_on}*{curr_gene}_I",
+        "inactivation": "{k_off}*{curr_gene}_A",
+        "mRNA_prod": "{k_prod_mRNA}*{curr_gene}_A",
+        "mRNA_deg": "{k_deg_mRNA}*{curr_gene}_mRNA",
+        "protein_prod": "{k_prod_protein}*{curr_gene}_mRNA",
+        "protein_deg": "{k_deg_protein}*{curr_gene}_protein"
+        }
+
+        reactions = []
+        for j, curr_gene in enumerate(gene_list):
+            param = lambda k: f"{{{k}_{curr_gene}}}"
+            # activation
+            expr = prop["activation"].replace("{k_on}", param("k_on")).replace("{curr_gene}", curr_gene)
+            reactions.append({"species1":f"{curr_gene}_A","change1":1,
+                            "species2":f"{curr_gene}_I","change2":-1,
+                            "propensity":expr,"time":"-"})
+                # regulation
+            # --- regulation (OR gate with subtractive repression) ---
+            regs = np.where(connectivity_matrix[:, j] != 0)[0]
+
+            act_terms = []
+            hill_terms = []
+            k_add_list = []
+
+            for i in regs:
+                regulator = gene_list[i]
+                edge = f"{regulator}_to_{curr_gene}"
+
+                # TF_i symbol
+                tf_i = f"{regulator}_protein"
+
+                # n_i and K_i symbols
+                n_i = f"{{n_{edge}}}"
+                K_i = f"{{k_{edge}}}"
+
+                # k_add symbol
+                k_add_i = f"{{k_add_{edge}}}"
+                k_add_list.append(k_add_i)
+
+                # individual activation Hill_i = TF_i^n_i / K_i^n_i
+                hill_i = f"({tf_i}**{n_i})/({K_i}**{n_i})"
+                hill_terms.append(hill_i)
+
+                # k_add_i * TF_i^n_i / K_i^n_i
+                act_terms.append(f"{k_add_i} * {hill_i}")
+
+            # --------------------------------------------------------------
+            # Cooperative AND-gate term
+            # --------------------------------------------------------------
+            if len(regs) >= 2:
+                # TF_1**n * TF_2**n
+                terms = []
+                for i in regs:
+                    edge = f"{gene_list[i]}_to_{curr_gene}"
+                    terms.append(f"{gene_list[i]}_protein**{{n_{edge}}}")
+                tf_product = " * ".join(terms)
+
+                # (K1*K2)^n
+                K_product = " * ".join([f"{{k_{gene_list[i]}_to_{curr_gene}}}" for i in regs])
+                K_product_n = f"({K_product})**{{n_{gene_list[i]}_to_{curr_gene}}}"
+
+                # cooperative Hill term
+                coop_hill = f"({tf_product})/({K_product_n})"
+
+                # max(k_add_i)
+                k_add_max = "max(0, " + ", ".join(k_add_list) + ")"
+
+                coop_term = f"{k_add_max} * {coop_hill}"
+            else:
+                coop_term = "0"
+
+            # --------------------------------------------------------------
+            # Numerator = sum individual + cooperative
+            # --------------------------------------------------------------
+            numerator = " + ".join(act_terms + [coop_term])
+
+            # --------------------------------------------------------------
+            # Denominator = 1 + sum individual Hill loads
+            # --------------------------------------------------------------
+            denominator = "1 + " + " + ".join(hill_terms)
+
+            # --------------------------------------------------------------
+            # Final regulation expression
+            # --------------------------------------------------------------
+            if len(regs) > 0:
+                final_expr = f"({numerator}) / ({denominator})"
+            else:
+                final_expr = 0
+            # Add reaction
+            reactions.append({
+                "species1": f"{curr_gene}_A", "change1": 1,
+                "species2": f"{curr_gene}_I", "change2": -1,
+                "propensity": final_expr, "time": "-"
+            })
+
+            # inactivation
+            expr = prop["inactivation"].replace("{k_off}",param("k_off")).replace("{curr_gene}",curr_gene)
+            reactions.append({"species1":f"{curr_gene}_I","change1":1,
+                            "species2":f"{curr_gene}_A","change2":-1,
+                            "propensity":expr,"time":"-"})
+            # production/degradation
+            for label,suffix,chg in [
+                ("mRNA_prod","mRNA",1),("mRNA_deg","mRNA",-1),
+                ("protein_prod","protein",1),("protein_deg","protein",-1)
+            ]:
+                expr = prop[label].replace("{curr_gene}",curr_gene)
+                for k in ["k_prod_mRNA","k_deg_mRNA","k_prod_protein","k_deg_protein"]:
+                    expr = expr.replace(f"{{{k}}}",param(k))
+                reactions.append({"species1":f"{curr_gene}_{suffix}","change1":chg,
+                                "species2":"-","change2":"-",
+                                "propensity":expr,"time":"-"})
     df = pd.DataFrame(reactions)
     df['propensity'] = df['propensity'].astype(str)
+    df.to_csv("propensity.csv")
     reactions_df = (
         df.groupby(['species1','change1','species2','change2','time'])['propensity']
         .agg(lambda x: ' + '.join(x)).reset_index()
@@ -221,6 +557,70 @@ def generate_initial_state_from_genes(gene_list):
         ]
     return pd.DataFrame(states)
 
+def assign_k_values_matrix(gene_list, connectivity_matrix, param_dict, K_to_use):
+    """
+    Assign k-values for every regulatory interaction using a K matrix.
+
+    Parameters
+    ----------
+    gene_list : list of gene names
+    connectivity_matrix : numpy array (n_genes x n_genes)
+        Nonzero entries indicate regulatory edges.
+    param_dict : dict
+        Dictionary where {k_src_to_tgt} keys will be replaced.
+    K_to_use : numpy array (n_genes x n_genes)
+        K-value matrix, where K_to_use[i, j] is K(src -> tgt).
+
+    Returns
+    -------
+    param_dict : updated dict with new {k_src_to_tgt} values.
+    """
+
+    n_genes = len(gene_list)
+    K_to_use = np.asarray(K_to_use, dtype=float)
+
+    # -----------------------------------------------------------
+    # 1) Validate matrix shape
+    # -----------------------------------------------------------
+    if K_to_use.shape != (n_genes, n_genes):
+        raise ValueError(
+            f"K_to_use must have shape ({n_genes},{n_genes}), "
+            f"but got {K_to_use.shape}"
+        )
+
+    # -----------------------------------------------------------
+    # 2) Validate that every TRUE edge has a specified K value
+    # -----------------------------------------------------------
+    for i in range(n_genes):
+        for j in range(n_genes):
+            if connectivity_matrix[i, j] != 0:
+                if np.isnan(K_to_use[i, j]):
+                    raise ValueError(
+                        f"K-value missing (NaN) for interaction "
+                        f"{gene_list[i]} -> {gene_list[j]} at index [{i},{j}]"
+                    )
+
+                if K_to_use[i, j] <= 0:
+                    raise ValueError(
+                        f"K-value for {gene_list[i]} -> {gene_list[j]} "
+                        f"must be > 0, got {K_to_use[i, j]}"
+                    )
+
+    # -----------------------------------------------------------
+    # 3) Assign K-values into param_dict
+    # -----------------------------------------------------------
+    protein_levels = []
+    for i, src in enumerate(gene_list):
+        for j, tgt in enumerate(gene_list):
+
+            if connectivity_matrix[i, j] != 0:
+                key = f"{{k_{src}_to_{tgt}}}"
+                param_dict[key] = float(K_to_use[i, j])
+                protein_levels.append(float(K_to_use[i, j]))
+    print("Assigned K from input matrix.")
+    print(param_dict)
+    return np.array(protein_levels), param_dict
+
 def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list,
                                       target_hill=0.5, scale_k=None):
     """
@@ -236,7 +636,7 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
             (positive for activation, negative for repression).
         gene_list (list): List of gene names corresponding to the rows and columns 
             of the connectivity matrix.
-        target_hill (float, optional): Hill coefficient used to scale regulatory 
+        target_hill (float, optional): Hill function value used to scale regulatory 
             effects. Default is 0.5.
         scale_k (numpy.ndarray, optional): Scaling matrix for rate constants. If 
             None, defaults to a matrix of ones with the same dimensions as the 
@@ -251,7 +651,7 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
         - The function calculates steady-state protein levels based on burst 
           probabilities and production/degradation rates.
         - Regulatory effects are computed using the connectivity matrix and scaled 
-          by the target Hill coefficient (default is 0.5).
+          by the target Hill function value (default is 0.5).
         - Rate constants (k values) are assigned based on steady-state protein 
           levels and multiplied by the scaling matrix.
     """
@@ -290,6 +690,236 @@ def generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list
                 param_dict[key] = protein_levels[i]*scale_k[i,j]
     return protein_levels, param_dict
 
+def generate_k_from_steady_state_calc_or(
+    param_dict, connectivity_matrix, gene_list,
+    target_hill=0.5, scale_k=None
+):
+    n_genes = len(gene_list)
+    if scale_k is None:
+        scale_k = np.ones((n_genes, n_genes))
+    protein_levels = np.zeros(n_genes)
+    for i,gene in enumerate(gene_list):
+        k_on = param_dict[f'{{k_on_{gene}}}']
+        k_off = param_dict[f'{{k_off_{gene}}}']
+        k_prod_mRNA = param_dict[f'{{k_prod_mRNA_{gene}}}']
+        k_deg_mRNA  = param_dict[f'{{k_deg_mRNA_{gene}}}']
+        k_prod_prot = param_dict[f'{{k_prod_protein_{gene}}}']
+        k_deg_prot  = param_dict[f'{{k_deg_protein_{gene}}}']
+        regs = np.where(connectivity_matrix[:,i]!=0)[0]
+        if len(regs) > 0:
+
+            num_sum = 0.0          # sum( k_add_r * hill_r )
+            den_sum = 0.0          # 1 + sum(hill_r)
+            hill_list = []         # store hill_r for cooperative term
+            k_add_list = []        # store all k_add values for max()
+
+            for r in regs:
+                src = gene_list[r]
+                edge = f"{src}_to_{gene}"
+
+                k_add_r = param_dict.get(f"{{k_add_{edge}}}", 1.0)
+                n_r     = param_dict.get(f"{{n_{edge}}}",      1.0)
+                K_r     = param_dict.get(f"{{k_{edge}}}",      1.0)
+
+                TF_r = protein_levels[r]
+
+                # TF^n / K^n
+                hill_r = (TF_r**n_r) / (K_r**n_r + 1e-12)
+
+                num_sum += k_add_r * hill_r
+                den_sum += hill_r
+
+                hill_list.append(hill_r)
+                k_add_list.append(k_add_r)
+
+            # ---------------------------------------------------
+            # Cooperative AND term (only if ≥2 regulators)
+            # ---------------------------------------------------
+            if len(regs) > 1:
+
+                prod_TF = 1.0
+                prod_K  = 1.0
+
+                for r in regs:
+                    src = gene_list[r]
+                    edge = f"{src}_to_{gene}"
+
+                    n_r = param_dict.get(f"{{n_{edge}}}", 1.0)
+                    K_r = param_dict.get(f"{{k_{edge}}}", 1.0)
+                    TF_r = protein_levels[r]
+
+                    prod_TF *= TF_r**n_r
+                    prod_K  *= K_r**n_r
+
+                coop = max(k_add_list) * (
+                    prod_TF / (prod_K + prod_TF + 1e-12)
+                )
+
+                num_sum += coop
+
+            # ---------------------------------------------------
+            # Final OR-gate normalized
+            # ---------------------------------------------------
+            k_reg = num_sum / (1.0 + den_sum)
+            k_on_eff = k_on + k_reg
+
+        else:
+            # no regulators
+            k_on_eff = k_on
+
+
+        # steady-state mRNA → protein
+        burst_prob = k_on_eff / (k_on_eff + k_off)
+        m = k_prod_mRNA * burst_prob / k_deg_mRNA
+        protein_levels[i] = max(m * k_prod_prot / k_deg_prot, 0.1)
+
+    # assign k values
+    for i, src in enumerate(gene_list):
+        for j, tgt in enumerate(gene_list):
+            if connectivity_matrix[i, j] != 0:
+                key = f"{{k_{src}_to_{tgt}}}"
+                K_val = protein_levels[i] * scale_k[i, j]
+                K_val = max(K_val, 1e-9)
+                param_dict[key] = K_val
+
+    return protein_levels, param_dict
+
+def generate_k_from_steady_state_calc_multiplicative_and(
+    param_dict, connectivity_matrix, gene_list,
+    target_hill=0.5, scale_k=None
+):
+    """
+    Calculate steady-state protein levels and assign rate constants (k values) 
+    for gene interactions using a multiplicative AND-gate logic.
+
+    This function computes the effective ON-rates based on intrinsic k_on and
+    regulatory effects from upstream genes using the following AND-gate rule:
+
+        k_reg = max(k_add_i) * (Π TF_i^n_i) / (Π K_i^n_i + Π TF_i^n_i)
+
+    If a gene has no regulators, then:
+
+        k_reg = 0
+        k_on_eff = k_on
+
+    Args:
+        param_dict (dict):
+            Dictionary containing parameters for gene regulation, including:
+
+                {k_on_gene}, {k_off_gene},
+                {k_prod_mRNA_gene}, {k_deg_mRNA_gene},
+                {k_prod_protein_gene}, {k_deg_protein_gene},
+                {k_add_src_to_tgt}, {n_src_to_tgt}, {k_src_to_tgt}
+
+        connectivity_matrix (numpy.ndarray):
+            Matrix (n_genes × n_genes) encoding regulatory edges.
+            Non-zero entry at (i,j) means gene i regulates gene j.
+
+        gene_list (list of str):
+            Names corresponding to connectivity_matrix indices.
+
+        target_hill (float):
+            Unused here but kept for API consistency.
+
+        scale_k (numpy.ndarray or None):
+            Optional scaling matrix for resulting K assignments.
+            If None → identity scaling.
+
+    Returns:
+        protein_levels (np.ndarray):
+            Steady-state protein levels for each gene.
+
+        param_dict (dict):
+            Updated dictionary where each interaction key {k_src_to_tgt}
+            is replaced with its computed steady-state value.
+
+    Notes:
+        - Steady-state mRNA and protein are computed as:
+
+              p_on_eff = k_on_eff / (k_on_eff + k_off)
+              mRNA_ss  = p_on_eff * k_prod_mRNA / k_deg_mRNA
+              protein  = mRNA_ss * k_prod_protein / k_deg_protein
+
+        - AND-gate requires all regulators simultaneously high to activate.
+    """
+
+    n_genes = len(gene_list)
+    if scale_k is None:
+        scale_k = np.ones((n_genes, n_genes))
+
+    # Initialize proteins > 0 so first iteration can see regulation
+    protein_levels = np.ones(n_genes) * 10.0
+
+    # --------------------------------------------------------------
+    # LOOP THROUGH GENES
+    # --------------------------------------------------------------
+    for i, gene in enumerate(gene_list):
+
+        # Pull intrinsic gene parameters
+        k_on        = param_dict[f'{{k_on_{gene}}}']
+        k_off       = param_dict[f'{{k_off_{gene}}}']
+        k_prod_mRNA = param_dict[f'{{k_prod_mRNA_{gene}}}']
+        k_deg_mRNA  = param_dict[f'{{k_deg_mRNA_{gene}}}']
+        k_prod_prot = param_dict[f'{{k_prod_protein_{gene}}}']
+        k_deg_prot  = param_dict[f'{{k_deg_protein_{gene}}}']
+
+        # Identify regulators of this gene
+        regulators = np.where(connectivity_matrix[:, i] != 0)[0]
+        n_regs = len(regulators)
+
+        # ----------------------------------------------------------
+        # CASE: NO REGULATORS → Purely intrinsic activation
+        # ----------------------------------------------------------
+        if n_regs == 0:
+            k_reg = 0.0
+            k_on_eff = k_on
+
+        else:
+            # ------------------------------------------------------
+            # CASE: AND GATE
+            # ------------------------------------------------------
+            tf_terms = []       # TF_i ** n_i
+            K_terms  = []       # K_i ** n_i
+            k_add_values = []
+
+            for r in regulators:
+                src = gene_list[r]
+                edge = f"{src}_to_{gene}"
+
+                # upstream TF protein level from previous iteration
+                TF_val = max(protein_levels[r], 1e-12)
+                k_add_val = param_dict.get(f"{{k_add_{edge}}}", 0.0)
+
+            # Cooperative strength
+            k_add_max = max([0.0] + k_add_values)
+
+            # AND gate: cooperative activation only if all TFs are present
+            k_reg = k_add_max * target_hill
+
+            k_on_eff = k_on + k_reg
+
+        # ----------------------------------------------------------
+        # COMPUTE STEADY-STATE mRNA AND PROTEIN
+        # ----------------------------------------------------------
+        p_on_eff = k_on_eff / (k_on_eff + k_off)
+        mRNA_ss  = p_on_eff * (k_prod_mRNA / k_deg_mRNA)
+        protein_ss = mRNA_ss * (k_prod_prot / k_deg_prot)
+
+        protein_levels[i] = max(protein_ss, 0.1)
+
+    # --------------------------------------------------------------
+    # ASSIGN k VALUES FOR EACH EDGE BASED ON PROTEIN LEVELS
+    # --------------------------------------------------------------
+    for src_idx, src in enumerate(gene_list):
+        for tgt_idx, tgt in enumerate(gene_list):
+            if connectivity_matrix[src_idx, tgt_idx] != 0:
+                key = f"{{k_{src}_to_{tgt}}}"
+                K_val = protein_levels[src_idx] * scale_k[src_idx, tgt_idx]
+                param_dict[key] = max(K_val, 1e-9)
+
+    return protein_levels, param_dict
+
+
 def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
                                       target_hill=0.5, scale_k=None):
     """
@@ -305,7 +935,7 @@ def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
             (positive for activation, negative for repression).
         gene_list (list): List of gene names corresponding to the rows and columns 
             of the connectivity matrix.
-        target_hill (float, optional): Hill coefficient used to scale regulatory 
+        target_hill (float, optional): Hill function value used to scale regulatory 
             effects. Default is 0.5.
         scale_k (numpy.ndarray, optional): Scaling matrix for rate constants. If 
             None, defaults to a matrix of ones with the same dimensions as the 
@@ -320,7 +950,7 @@ def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
         - The function calculates steady-state protein levels based on burst 
           probabilities and production/degradation rates.
         - Regulatory effects are computed using the connectivity matrix and scaled 
-          by the target Hill coefficient (default is 0.5).
+          by the target Hill function value  (default is 0.5).
         - Rate constants (k values) are assigned based on steady-state protein 
           levels and multiplied by the scaling matrix.
     """
@@ -360,7 +990,7 @@ def generate_k_from_max_expression(param_dict, connectivity_matrix, gene_list,
     return protein_levels, param_dict
 
 def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
-                          n_matrix=None, k_add_matrix=None, scale_k=None):
+                          n_matrix=None, k_add_matrix=None, scale_k=None, multiple_interaction_type = "additive", use_given_K = None, K_to_use = None):
     """
     Adds interaction terms to the parameter dictionary based on the connectivity matrix 
     and gene list, and calculates steady-state paramet
@@ -399,8 +1029,15 @@ def add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                 param_dict[f"{{n_{edge}}}"]     = float(n_matrix[i,j])
                 param_dict[f"{{k_add_{edge}}}"] = float(k_add_matrix[i,j])
     # print(f"param_dict before steady state calc: {param_dict}")
-    return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
-
+    if use_given_K and K_to_use:
+        return assign_k_values_matrix(gene_list, connectivity_matrix, param_dict, K_to_use)
+    elif multiple_interaction_type == "and":
+        return generate_k_from_steady_state_calc_multiplicative_and(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
+    elif multiple_interaction_type == "or":
+        return generate_k_from_steady_state_calc_or(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
+    elif multiple_interaction_type == "additive":
+        return generate_k_from_steady_state_calc(param_dict, connectivity_matrix, gene_list, scale_k=scale_k)
+    
 def setup_gillespie_params_from_reactions(init_states: pd.DataFrame,
                                           reactions: pd.DataFrame,
                                           param_dictionary: dict):
@@ -463,6 +1100,7 @@ def setup_gillespie_params_from_reactions(init_states: pd.DataFrame,
     for L in prop_formulas:
         src.append("    " + L)
     ns = "\n".join(src)
+    # print(ns)
     loc = {}
     exec(ns, {'numba':numba}, loc)
     return pop0, np.array(update_matrix, dtype=np.int64), loc['update_propensities'], species_index
@@ -578,6 +1216,7 @@ def gillespie_simulation_all_cells(update_propensities, update_matrix,
                 if stuck_counter > max_attempts:
                     verbose_flags[cell] = 1
                     samples[cell, i_time:, :] = pop
+                    print(pop)
                     break
                 samples[cell, i_time, :] = pop
                 continue
@@ -742,10 +1381,12 @@ def gillespie_simulation_all_cells_with_event_log(update_propensities, update_ma
 #     return is_steady
 
 import numpy as np
-
+def hill_fn(x, n, k):
+        x = np.asarray(x)
+        return x ** n / (x ** n + k ** n)
 def is_steady_state(samples, time_points, mean_tol=0.05, std_tol=0.05,
                     window_frac=0.1, param_dict=None, interaction_matrix=None,
-                    gene_list=None, verbose=True):
+                    gene_list=None, verbose=True, multiple_interaction_type = "additive"):
     """
     Check if simulation has reached steady state and matches
     param-based steady_state_calc protein levels (per gene).
@@ -760,9 +1401,7 @@ def is_steady_state(samples, time_points, mean_tol=0.05, std_tol=0.05,
         gene_list: ordered list of gene names
         verbose: whether to print diagnostics
     """
-    def hill_fn(x, n, k):
-        x = np.asarray(x)
-        return x ** n / (x ** n + k ** n)
+
 
     n_cells, n_time, n_species = samples.shape
     window = int(n_time * window_frac)
@@ -804,24 +1443,155 @@ def is_steady_state(samples, time_points, mean_tol=0.05, std_tol=0.05,
             p_deg_mRNA = param_dict[f'{{k_deg_mRNA_{gene}}}']
             p_prod_prot = param_dict[f'{{k_prod_protein_{gene}}}']
             p_deg_prot = param_dict[f'{{k_deg_protein_{gene}}}']
+            
+            if multiple_interaction_type == "additive":
+                reg_eff = 0.0
+                regulators = np.where(interaction_matrix[:, i] != 0)[0]
+                for r in regulators:
+                    src_gene = gene_list[r]
+                    edge = f"{src_gene}_to_{gene}"
+                    p_add = param_dict.get(f"{{k_add_{edge}}}", 0.0)
+                    n_val = param_dict.get(f"{{n_{edge}}}", 1.0)
+                    k_val = param_dict.get(f"{{k_{edge}}}", 1.0)
+                    sign = interaction_matrix[r, i]
+                    x_vals = proteins_at_t[:, r]
+                    hill_vals = hill_fn(x_vals, n_val, k_val)
+                    reg_eff += p_add * hill_vals * sign
+                p_on_eff = p_on + reg_eff
+            
+            elif multiple_interaction_type == "and":
+            
+                regulators = np.where(interaction_matrix[:, i] != 0)[0]
 
-            reg_eff = 0.0
-            regulators = np.where(interaction_matrix[:, i] != 0)[0]
-            for r in regulators:
-                src_gene = gene_list[r]
-                edge = f"{src_gene}_to_{gene}"
-                p_add = param_dict.get(f"{{k_add_{edge}}}", 0.0)
-                n_val = param_dict.get(f"{{n_{edge}}}", 1.0)
-                k_val = param_dict.get(f"{{k_{edge}}}", 1.0)
-                sign = interaction_matrix[r, i]
-                x_vals = proteins_at_t[:, r]
-                hill_vals = hill_fn(x_vals, n_val, k_val)
-                reg_eff += p_add * hill_vals * sign
+                # ---------------------------------------------------
+                # No regulators → regulation = 0
+                # ---------------------------------------------------
+                if len(regulators) == 0:
+                    k_reg = 0.0
+                    p_on_eff = p_on + k_reg    # = p_on
+                    continue
 
-            p_on_eff = p_on + reg_eff
+                # ---------------------------------------------------
+                # Step 1 — collect terms 
+                # ---------------------------------------------------
+                tf_terms = []      # TF_i^n_i (array)
+                K_terms = []       # K_i^n_i (scalar)
+                k_add_values = []  # k_add_i (scalar)
+
+                for r in regulators:
+                    src_gene = gene_list[r]
+                    edge = f"{src_gene}_to_{gene}"
+
+                    TF_val = proteins_at_t[:, r]          # TF values (array)
+
+                    n_val = param_dict.get(f"{{n_{edge}}}", 2.0)
+                    K_val = param_dict.get(f"{{k_{edge}}}", 1.0)
+                    k_add_val = param_dict.get(f"{{k_add_{edge}}}", 6.0)
+
+                    tf_terms.append(TF_val ** n_val)      # TF_i^n_i
+                    K_terms.append(K_val ** n_val)        # K_i^n_i
+                    k_add_values.append(k_add_val)
+
+                # ---------------------------------------------------
+                # Step 2 — product(TF^n) and product(K^n)
+                # ---------------------------------------------------
+                prod_tf = np.ones_like(tf_terms[0])
+                for v in tf_terms:
+                    prod_tf *= v
+
+                prod_K = 1.0
+                for K in K_terms:
+                    prod_K *= K
+
+                # ---------------------------------------------------
+                # Step 3 — cooperative regulator strength
+                # ---------------------------------------------------
+                k_add_max = max([0] + k_add_values)   # safe even if all zero
+
+                # ---------------------------------------------------
+                # Step 4 — AND gate formula
+                # ---------------------------------------------------
+                # k_reg = max(k_add) * (prod TF^n / (prod K^n + prod TF^n))
+                k_reg = k_add_max * (prod_tf / (prod_K + prod_tf + 1e-12))
+
+                # ---------------------------------------------------
+                # Step 5 — final p_on_eff
+                # ---------------------------------------------------
+                p_on_eff = p_on + k_reg
+
+
+            elif multiple_interaction_type == "or":
+               # --- OR-gate regulatory effect ---
+                regulators = np.where(interaction_matrix[:, i] != 0)[0]
+
+                if len(regulators) == 0:
+                    # no regulation
+                    p_on_eff = p_on
+                else:
+
+                    # -------- per-regulator contributions ----------
+                    h_list = []          # hill_r values
+                    add_list = []        # k_add_r * hill_r
+                    k_add_vals = []      # for cooperative term
+
+                    for r in regulators:
+                        src_gene = gene_list[r]
+                        edge = f"{src_gene}_to_{gene}"
+
+                        k_add_r = param_dict.get(f"{{k_add_{edge}}}", 0.0)
+                        n_r     = param_dict.get(f"{{n_{edge}}}",     1.0)
+                        K_r     = param_dict.get(f"{{k_{edge}}}",     1.0)
+
+                        TF_r = proteins_at_t[:, r]   # array over all cells
+
+                        # TF^n / K^n
+                        hill_r = (TF_r**n_r) / (K_r**n_r + 1e-12)
+
+                        h_list.append(hill_r)
+                        add_list.append(k_add_r * hill_r)
+                        k_add_vals.append(k_add_r)
+
+                    # --------------------------------------------------
+                    # OR additive contribution
+                    # --------------------------------------------------
+                    h_sum  = np.zeros_like(h_list[0])
+                    add_sum = np.zeros_like(h_list[0])
+
+                    for hr, ar in zip(h_list, add_list):
+                        h_sum  += hr
+                        add_sum += ar
+
+                    # --------------------------------------------------
+                    # Cooperative AND-like term (if ≥2 regulators)
+                    # --------------------------------------------------
+                    coop = 0.0
+                    if len(regulators) > 1:
+                        prod_TF = np.ones_like(h_list[0])
+                        prod_K  = 1.0
+
+                        for r in regulators:
+                            src_gene = gene_list[r]
+                            edge = f"{src_gene}_to_{gene}"
+
+                            n_r = param_dict.get(f"{{n_{edge}}}", 1.0)
+                            K_r = param_dict.get(f"{{k_{edge}}}", 1.0)
+                            TF_r = proteins_at_t[:, r]
+
+                            prod_TF *= TF_r**n_r
+                            prod_K  *= K_r**n_r
+
+                        coop = max(k_add_vals) * (prod_TF / (prod_K + prod_TF + 1e-12))
+
+                    # --------------------------------------------------
+                    # Full OR regulatory effect
+                    # --------------------------------------------------
+                    k_reg = (add_sum + coop) / (1.0 + h_sum)
+
+                    # effective ON rate
+                    p_on_eff = p_on + k_reg
+
             denom = np.where(p_on_eff + p_off <= 0, 1e-12, p_on_eff + p_off)
             burst_prob = float(np.mean(p_on_eff / denom))
-            
             m = p_prod_mRNA * burst_prob / max(p_deg_mRNA, 1e-12)
             protein = max(m * p_prod_prot / max(p_deg_prot, 1e-12), 0.1)
             protein_expected_gene_order[i] = protein
@@ -961,20 +1731,26 @@ def process_param_set(rows, label, base_config):
     # k_add_matrix   = base_config['k_add_matrix']
     # n_matrix       = base_config['n_matrix']
     time_points    = np.arange(0, base_config['simulation_time_before_division'], 1)
-    sample_twins_time_points    = np.arange(0, base_config['twin_simulation_time_after_division'] + base_config['twin_measurement_resolution'], base_config['twin_measurement_resolution']) 
-    n_cells        = base_config['n_cells']
+    sample_twins_time_points = np.arange(0, base_config['twin_simulation_time_after_division'] + base_config['twin_measurement_resolution'], base_config['twin_measurement_resolution']) 
+    n_cells = base_config['n_cells']
     scale_k = base_config.get("scale_k", None)
     log_pi_on = base_config.get("log_pi_on", False)
+    use_given_K = base_config.get("use_given_K", False)
+    K_to_use = base_config.get("K_to_use", None)
+    if use_given_K and K_to_use:
+        print("Using given hill Constants.")
+    multiple_interaction_type = base_config.get("multiple_interaction_type", "additive")
     print(f"Log pi on is set to {log_pi_on}")
+    print(f"Multiple interaction type: {multiple_interaction_type}")
     # Build reactions and parameters for this row set
     n_genes, connectivity_matrix = read_input_matrix(path_to_connectivity_matrix)
     assert len(rows) >= n_genes, "The number of parameter rows entered is less than the number of genes"
-    reactions_df, gene_list = generate_reaction_network_from_matrix(connectivity_matrix)
+    reactions_df, gene_list = generate_reaction_network_from_matrix(connectivity_matrix, multiple_interaction_type=multiple_interaction_type)
     # display(reactions_df)
     init_states = generate_initial_state_from_genes(gene_list)
     param_dict = assign_parameters_to_genes(param_csv, gene_list, rows)
     n_matrix = np.zeros((n_genes, n_genes))
-    k_add_matrix = np.zeros((n_genes, n_genes))
+    k_add_matrix = np.zeros((n_genes, n_genes), dtype=float)
     for i in range(n_genes):
         for j in range(n_genes):
             #Check in the connectivity matrix if the edge is a regulation or not
@@ -991,8 +1767,10 @@ def process_param_set(rows, label, base_config):
     print("Done until addition of interaction terms")
     steady_state, full_param_dict = add_interaction_terms(param_dict, connectivity_matrix, gene_list,
                                                           n_matrix=n_matrix,
-                                                          k_add_matrix=k_add_matrix, scale_k=scale_k)
+                                                          k_add_matrix=k_add_matrix, scale_k=scale_k,
+                                                          multiple_interaction_type=multiple_interaction_type,  use_given_K = use_given_K, K_to_use = K_to_use)
     print(full_param_dict)
+
     pop0, update_matrix, update_prop, species_index = setup_gillespie_params_from_reactions(
         init_states, reactions_df, full_param_dict)
     promoter_indices = get_promoter_indices(species_index, gene_list)
@@ -1023,11 +1801,14 @@ def process_param_set(rows, label, base_config):
     final_states = base_samples[:, -1, :]
     del base_samples
     gc.collect()
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+    id = uuid.uuid4().hex[:8]
+    prefix = f"{label}_{timestamp}_ncells_{n_cells}_{base_config['type']}_{id}"
+    df_base.to_csv(f"{base_config['output_folder']}/simulation_before_division_df_{prefix}.csv", index=False)
     rep_time = sample_twins_time_points
     pop0_rep = np.concatenate([final_states.T, final_states.T], axis=1)
     verbose_flags = np.zeros(2*n_cells, dtype=np.int64)
-    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
-    id = uuid.uuid4().hex[:8]
+
     if log_pi_on:
         # ---- allocate logging lists outside numba ----
         event_times_all, event_genes_all, event_states_all = allocate_event_logs(2 * n_cells)
@@ -1069,11 +1850,9 @@ def process_param_set(rows, label, base_config):
     # 4) Save
     # timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
     # id = uuid.uuid4().hex[:8]
-    prefix = f"{label}_{timestamp}_ncells_{n_cells}_{base_config['type']}_{id}"
     df_rep.to_csv(f"{base_config['output_folder']}/df_{prefix}.csv", index=False)
     # np.savetxt(f"{base_config['output_folder']}/samples_{prefix}.csv", rep_samples.reshape(2*n_cells, -1), delimiter=",")
-    if flag:
-        df_base.to_csv(f"{base_config['output_folder']}/simulation_before_division_df_{prefix}.csv", index=False)
+    # if flag:
     record = {
         "id": id,
         "rows": rows,
@@ -1235,6 +2014,7 @@ if __name__ == "__main__":
             print(rows)
             print("Error")
             break
+        
     param_sets = list(zip(row_list, labels))
     print(base_config["output_folder"])
     print("length of param_sets", len(param_sets))
