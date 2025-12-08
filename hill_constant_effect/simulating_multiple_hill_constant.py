@@ -5,6 +5,10 @@
 # 
 path_to_data = "/home/gzu5140/Keerthana_b1042/grnInference/simulation_data/hill_constant_effect/"
 
+# %% [markdown]
+# ## Details about the simulation
+
+### Set this for both running the simulation
 base_config = {
     'n_cells': 6000, #Number of cells before division (number of twin pairs)
     'simulation_time_before_division': 1000, #The time used to run the initial cells before division. User must set this time to ensure the population reaches steady state [hours]
@@ -20,11 +24,6 @@ base_config = {
     "number_of_cores_per_parameter": 9, #Number of cores to be used per parameter (number_of_parallel_parameters * number_of_cores_per_parameter = number of cores in your computer)
     "scale_k": [[0,1],[0,0]]
 }
-# %% [markdown]
-# ## Details about the simulation
-# 
-# ### Set this for both running the simulation and before inferring using TwINFER
-# 
 
 # %%
 import sys
@@ -32,6 +31,7 @@ from pathlib import Path
 path_to_code_repo = Path("/home/gzu5140/Keerthana_b1042/grnInference/code/TwINFER")
 sys.path.append(str(path_to_code_repo))
 
+import copy
 from joblib import Parallel, delayed
 from tqdm.auto import tqdm
 import os
@@ -42,21 +42,8 @@ print("Threads Numba will use:", get_num_threads())
 
 import importlib
 from TwINFER_function_scripts import gillespie_script
-
 importlib.reload(gillespie_script)
-
-
 from TwINFER_function_scripts.gillespie_script import process_param_set
-
-
-
-# %%
-
-
-
-# %% [markdown]
-# ### For inferring with TwINFER
-# 
 
 # %%
 # Calculation functions
@@ -87,20 +74,14 @@ from TwINFER_function_scripts.correlation_analysis_helpers import (
     plot_network
 )
 
-
 # %% [markdown]
 # ## Simulate the gene expression in a population of cells
 # 
 # The code simulates gene expression based on a GRN (described by the interaction matrix) and expression of each gene is defined by parameters (each row in the parameter sheet) using the Gillespie algorithm.
-# 
-
 # %%
-import copy
 import numpy as np
 from tqdm.auto import tqdm
 import sys
-import argparse
-import numpy as np
 import copy
 from itertools import product
 from tqdm import tqdm
@@ -126,10 +107,6 @@ chunks = [all_tasks[i*chunk_size:(i+1)*chunk_size] for i in range(n_splits)]
 tasks_to_run = chunks[chunk_id]
 
 # --- loop ---
-from joblib import Parallel, delayed
-import copy
-from tqdm import tqdm
-
 tasks = []
 for scale_val, rep in tasks_to_run:
     run_config = copy.deepcopy(base_config)

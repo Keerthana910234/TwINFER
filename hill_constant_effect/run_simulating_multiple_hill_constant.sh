@@ -13,4 +13,4 @@
 eval "$(conda shell.bash hook)"
 conda activate twinfer
 
-python /home/gzu5140/Keerthana_b1042/grnInference/code/TwINFER/hill_constant_effect/simulating_multiple_hill_constant.py $SLURM_ARRAY_TASK_ID
+python simulating_multiple_hill_constant.py $SLURM_ARRAY_TASK_ID

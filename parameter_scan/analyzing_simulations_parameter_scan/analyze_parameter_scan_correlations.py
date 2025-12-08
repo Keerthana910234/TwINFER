@@ -1,3 +1,8 @@
+#This is the script to analyze the output of parameter scan simulations enmasse and output the 
+# pairwise gene correlations, p-values associated with it 
+# random-pair difference correlations, twin difference correlations and the z-score comparing them
+# twin cross-correlations and the p-value compared to random.
+
 import os, gc, warnings, argparse
 import numpy as np
 import pandas as pd
@@ -139,9 +144,8 @@ def subsample_for_timepair(simulation, t1, t2, rng):
     )
     return t1_twins, t2_twins, across_t_twin1, across_t_twin2, all_t1_t2
 
-
 # =============================
-# STEP 1 — Gene–gene (pooled over (t1,t2)) + Null A (independent of twin)
+# STEP 1 — Gene correlation (pooled over (t1,t2)) + Null distribution for gene correlation
 # =============================
 def calculate_pairwise_gene_gene_correlation_matrix(df, gene_list):
     """Undirected full matrix over pooled cells from t1+t2."""
@@ -173,10 +177,9 @@ def _compute_gene_gene_null(Rc, denom, seeds, triu_i, triu_j):
             out[k, pos] = C[i, j]
     return out
 
-
 def compute_gene_gene_null_distributions(all_t1_t2, gene_list, n_shuffles, n_jobs=None):
     """
-    Null A: Spearman null via shuffle of cells, optimized with Numba.
+    Null gene correlation distribution: Spearman null via shuffle of cells, optimized with Numba.
     Returns: dict[(gi, gj)] = np.ndarray(n_shuffles,)
     """
     X = all_t1_t2[gene_list].to_numpy()
@@ -208,97 +211,8 @@ def compute_gene_gene_null_distributions(all_t1_t2, gene_list, n_shuffles, n_job
 
 
 # =============================
-# STEP 2 — Twin correlations at time t, per gene-pair (replicate-differences) + Null B
+# STEP 2 — Twin difference correlations at time t, per gene-pair + Distribution of random-pair difference correlations
 # =============================
-def compute_diff_correlation_vectorized(rep1_tf, rep1_target, rep2_tf, rep2_target):
-    """Spearman corr between replicate differences for a gene-pair."""
-    try:
-        d1 = rep1_tf - rep2_tf
-        d2 = rep1_target - rep2_target
-        if len(d1) < 3:
-            return np.nan
-        return spearmanr(d1, d2).correlation
-    except Exception:
-        return np.nan
-
-
-def twin_pair_correlation_matrix(df_twins, gene_list):
-    """
-    Spearman correlations between replicate differences at one timepoint.
-    Uses scipy.stats.spearmanr instead of manual ranking.
-    """
-    mat = pd.DataFrame(np.nan, index=gene_list, columns=gene_list)
-    if df_twins.empty:
-        return mat
-
-    rep1 = df_twins[df_twins["replicate"] == 1]
-    rep2 = df_twins[df_twins["replicate"] == 2]
-    n = min(len(rep1), len(rep2))
-    if n < 3:
-        return mat
-
-    X1 = rep1[gene_list].to_numpy()[:n]
-    X2 = rep2[gene_list].to_numpy()[:n]
-    D = X1 - X2
-
-    S, _ = spearmanr(D, axis=0)
-    return pd.DataFrame(S, index=gene_list, columns=gene_list)
-
-
-def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
-    rng = np.random.default_rng(random_state)
-    rep_0 = simulation_data[simulation_data["replicate"] == 1].reset_index(drop=True)
-    rep_1 = simulation_data[simulation_data["replicate"] == 2].reset_index(drop=True)
-
-    min_cells = min(len(rep_0), len(rep_1))
-    p = len(gene_list)
-    if min_cells < 3:
-        return {
-            (min(gi, gj), max(gi, gj)): np.array([])
-            for i, gi in enumerate(gene_list)
-            for j, gj in enumerate(gene_list)
-            if j >= i
-        }
-
-    X1 = rep_0[gene_list].to_numpy()[:min_cells]
-    X2 = rep_1[gene_list].to_numpy()[:min_cells]
-    triu_i, triu_j = np.triu_indices(p, k=1)
-    seeds = rng.integers(0, 2**31 - 1, size=n_shuffles)
-
-    all_ut = _generate_random_shuffle_fast(X1, X2, triu_i, triu_j, seeds)
-    correlation_dict = {}
-    for pos, (i, j) in enumerate(zip(triu_i, triu_j)):
-        gi, gj = gene_list[i], gene_list[j]
-        correlation_dict[(min(gi, gj), max(gi, gj))] = all_ut[:, pos]
-
-    # Add diagonals with empty arrays
-    for g in gene_list:
-        key = (g, g)
-        if key not in correlation_dict:
-            correlation_dict[key] = np.array([])
-    return correlation_dict
-
-
-@njit(parallel=True)
-def _generate_random_shuffle_fast(X1, X2, triu_i, triu_j, seeds):
-    n_shuffles = len(seeds)
-    n, p = X1.shape
-    out = np.empty((n_shuffles, len(triu_i)), dtype=np.float64)
-
-    for s in prange(n_shuffles):
-        np.random.seed(seeds[s])
-        idx = np.random.permutation(n)
-        D = X1 - X2[idx, :]
-        S = spearman_matrix_from_diff(D)
-        for k in range(len(triu_i)):
-            i, j = triu_i[k], triu_j[k]
-            out[s, k] = S[i, j]
-    return out
-
-
-from numba import njit
-import numpy as np
-
 
 @njit
 def rankdata_numba(a):
@@ -341,10 +255,145 @@ def spearman_matrix_from_diff(D):
     N = Rc.T @ Rc
     return N / denom
 
+def twin_pair_correlation_matrix(df_twins, gene_list):
+    """
+    Spearman correlations between replicate differences at one timepoint.
+    Uses scipy.stats.spearmanr instead of manual ranking.
+    """
+    mat = pd.DataFrame(np.nan, index=gene_list, columns=gene_list)
+    if df_twins.empty:
+        return mat
+
+    rep_0 = simulation_data[simulation_data["replicate"] == 1]
+    rep_1 = simulation_data[simulation_data["replicate"] == 2]
+
+    # --- Must have matching replicates ---
+    if rep_0.empty or rep_1.empty:
+        raise ValueError("Both replicate 1 and replicate 2 must exist in the data.")
+
+    # --- ALIGN THE REPLICATES BY clone_id (fix for Problem 2) ---
+    # keep only clone_ids present in both replicates
+    common_clones = np.intersect1d(rep_0["clone_id"].unique(), rep_1["clone_id"].unique())
+
+    if len(common_clones) < 3:
+        # not enough aligned pairs → return empty distribution
+        return {
+            (min(gi, gj), max(gi, gj)): np.array([])
+            for gi in gene_list for gj in gene_list
+        }
+
+    # sort replicates by clone_id and filter to common clones
+    rep_0 = rep_0[rep_0["clone_id"].isin(common_clones)].sort_values("clone_id").reset_index(drop=True)
+    rep_1 = rep_1[rep_1["clone_id"].isin(common_clones)].sort_values("clone_id").reset_index(drop=True)
+
+    n = min(len(rep1), len(rep2))
+    if n < 3:
+        return mat
+
+    X1 = rep1[gene_list].to_numpy()[:n]
+    X2 = rep2[gene_list].to_numpy()[:n]
+    D = X1 - X2
+
+    S, _ = spearmanr(D, axis=0)
+    return pd.DataFrame(S, index=gene_list, columns=gene_list)
+
+@njit(parallel=True)
+def _generate_random_shuffle_fast(X1, X2, triu_i, triu_j, seeds):
+    n_shuffles = len(seeds)
+    n, p = X1.shape
+    out = np.empty((n_shuffles, len(triu_i)), dtype=np.float64)
+
+    for s in prange(n_shuffles):
+        np.random.seed(seeds[s])
+        idx = np.random.permutation(n)
+        D = X1 - X2[idx, :]
+        S = spearman_matrix_from_diff(D)
+        for k in range(len(triu_i)):
+            i, j = triu_i[k], triu_j[k]
+            out[s, k] = S[i, j]
+    return out
+
+def generate_random_shuffle(simulation_data, gene_list, n_shuffles=10000, random_state=42):
+    rng = np.random.default_rng(random_state)
+    rep_0 = simulation_data[simulation_data["replicate"] == 1]
+    rep_1 = simulation_data[simulation_data["replicate"] == 2]
+
+    # --- Must have matching replicates ---
+    if rep_0.empty or rep_1.empty:
+        raise ValueError("Both replicate 1 and replicate 2 must exist in the data.")
+
+    # --- ALIGN THE REPLICATES BY clone_id (fix for Problem 2) ---
+    # keep only clone_ids present in both replicates
+    common_clones = np.intersect1d(rep_0["clone_id"].unique(), rep_1["clone_id"].unique())
+
+    if len(common_clones) < 3:
+        # not enough aligned pairs → return empty distribution
+        return {
+            (min(gi, gj), max(gi, gj)): np.array([])
+            for gi in gene_list for gj in gene_list
+        }
+
+    # sort replicates by clone_id and filter to common clones
+    rep_0 = rep_0[rep_0["clone_id"].isin(common_clones)].sort_values("clone_id").reset_index(drop=True)
+    rep_1 = rep_1[rep_1["clone_id"].isin(common_clones)].sort_values("clone_id").reset_index(drop=True)
+
+    min_cells = min(len(rep_0), len(rep_1))
+    p = len(gene_list)
+    if min_cells < 3:
+        return {
+            (min(gi, gj), max(gi, gj)): np.array([])
+            for i, gi in enumerate(gene_list)
+            for j, gj in enumerate(gene_list)
+            if j >= i
+        }
+
+    X1 = rep_0[gene_list].to_numpy()[:min_cells]
+    X2 = rep_1[gene_list].to_numpy()[:min_cells]
+    triu_i, triu_j = np.triu_indices(p, k=1)
+    seeds = rng.integers(0, 2**31 - 1, size=n_shuffles)
+
+    all_ut = _generate_random_shuffle_fast(X1, X2, triu_i, triu_j, seeds)
+    correlation_dict = {}
+    for pos, (i, j) in enumerate(zip(triu_i, triu_j)):
+        gi, gj = gene_list[i], gene_list[j]
+        correlation_dict[(min(gi, gj), max(gi, gj))] = all_ut[:, pos]
+
+    # Add diagonals with empty arrays
+    for g in gene_list:
+        key = (g, g)
+        if key not in correlation_dict:
+            correlation_dict[key] = np.array([])
+    return correlation_dict
+
 
 # =============================
-# STEP 3 — Directed cross-time correlations + permutation p-values
+# STEP 3 — Twin cross-correlations + null distribution of random-pair cross-correlations
 # =============================
+
+@njit(parallel=True)
+def _permutation_counts_cross_time(RXc, RYc, denom, seeds):
+    n, p = RXc.shape
+    counts = np.zeros((p, p), dtype=np.int32)
+    n_shuffles = len(seeds)
+
+    # Observed correlation
+    N_obs = RXc.T @ RYc
+    S_obs = N_obs / denom
+
+    for k in prange(n_shuffles):
+        np.random.seed(seeds[k])
+        idx = np.random.permutation(n)
+        RYc_perm = RYc[idx, :]
+        N_perm = RXc.T @ RYc_perm
+        S_perm = N_perm / denom
+        for i in range(p):
+            for j in range(p):
+                if np.isnan(S_obs[i, j]) or np.isnan(S_perm[i, j]):
+                    continue
+                if abs(S_perm[i, j]) >= abs(S_obs[i, j]):
+                    counts[i, j] += 1
+    return S_obs, counts
+
 def directed_cross_time_with_pvals(across_twin1, across_twin2, t1, t2, gene_list, n_shuffles):
     """
     Optimized: Compute cross-time Spearman correlations and p-values.
@@ -392,31 +441,6 @@ def directed_cross_time_with_pvals(across_twin1, across_twin2, t1, t2, gene_list
             out[key] = (corr, pval)
     return out
 
-
-@njit(parallel=True)
-def _permutation_counts_cross_time(RXc, RYc, denom, seeds):
-    n, p = RXc.shape
-    counts = np.zeros((p, p), dtype=np.int32)
-    n_shuffles = len(seeds)
-
-    # Observed correlation
-    N_obs = RXc.T @ RYc
-    S_obs = N_obs / denom
-
-    for k in prange(n_shuffles):
-        np.random.seed(seeds[k])
-        idx = np.random.permutation(n)
-        RYc_perm = RYc[idx, :]
-        N_perm = RXc.T @ RYc_perm
-        S_perm = N_perm / denom
-        for i in range(p):
-            for j in range(p):
-                if np.isnan(S_obs[i, j]) or np.isnan(S_perm[i, j]):
-                    continue
-                if abs(S_perm[i, j]) >= abs(S_obs[i, j]):
-                    counts[i, j] += 1
-    return S_obs, counts
-
 # =============================
 # Simulation processor
 # =============================
@@ -429,7 +453,8 @@ def process_simulation(
     n_shuffles_random_diff=SHUFFLES_RANDOM_DIFF,
     n_shuffles_directed=SHUFFLES_DIRECTED,
     seed=2024,
-    mode="single"
+    mode="single",
+    remove_twin_structure = False
 ):
     """
     Process one simulation or a merged pair, depending on mode.
@@ -440,6 +465,7 @@ def process_simulation(
     # -----------------------
     # Load simulation data
     # -----------------------
+    #Analyzing single-state simulations
     if mode == "single":
         sim, folder = sim_info
         path = os.path.join(folder, sim)
@@ -453,6 +479,7 @@ def process_simulation(
             return None
         param_index = extract_param_index(sim)
 
+    #Merging two simulations to create multi-state transcriptomic data
     elif mode == "pair":
         sims, folder = sim_info  # sims = (file1, file2)
         path_1 = os.path.join(folder, sims[0])
@@ -473,28 +500,26 @@ def process_simulation(
     #############################
     # REMOVE TWIN STRUCTURE
     #############################
+    if remove_twin_structure:
+        # create a random permutation of clone IDs
+        # --- Break twin structure but preserve within-cell continuity ---
+        rng = np.random.default_rng(12345)
 
-    # create a random permutation of clone IDs
-    # --- Break twin structure but preserve within-cell continuity ---
-    rng = np.random.default_rng(12345)
+        unique_clones = np.array(df["clone_id"].unique())
 
-    unique_clones = np.array(df["clone_id"].unique())
+        # --- Generate a derangement (no clone keeps its original ID) ---
+        shuffled = unique_clones.copy()
+        while np.any(shuffled == unique_clones):
+            rng.shuffle(shuffled)
 
-    # --- Generate a derangement (no clone keeps its original ID) ---
-    shuffled = unique_clones.copy()
-    while np.any(shuffled == unique_clones):
-        rng.shuffle(shuffled)
+        shuffle_map = dict(zip(unique_clones, shuffled))
 
-    shuffle_map = dict(zip(unique_clones, shuffled))
+        # --- Apply mapping ONLY to replicate 2 ---
+        mask_rep2 = df["replicate"] == 2
+        df.loc[mask_rep2, "clone_id"] = df.loc[mask_rep2, "clone_id"].map(shuffle_map)
+        df = df.sort_values(["replicate", "clone_id"]).reset_index(drop=True)
 
-    # --- Apply mapping ONLY to replicate 2 ---
-    mask_rep2 = df["replicate"] == 2
-    df.loc[mask_rep2, "clone_id"] = df.loc[mask_rep2, "clone_id"].map(shuffle_map)
-    df = df.sort_values(["replicate", "clone_id"]).reset_index(drop=True)
 
-    #############################
-    # REMOVE TWIN STRUCTURE
-    #############################
     row = {}
     row['param_index'] = param_index
     # -----------------------
@@ -514,7 +539,7 @@ def process_simulation(
         t1_twins, t2_twins, twin1, twin2, all_t1_t2 = subsample_for_timepair(df, t1, t2, rng)
 
         # =====================================================
-        # STEP 1: Gene–gene correlation (pooled over t1+t2) + Null A
+        # STEP 1: Pairwise gene correlation (pooled over t1+t2) + Null distribution of gene correlation
         # =====================================================
         if all_t1_t2.empty:
             # Fill NaNs if no data
@@ -543,7 +568,7 @@ def process_simulation(
                     row[f"pval_gene_gene_{gi}_{gj}_t{t1}_t{t2}"] = pval
 
         # =====================================================
-        # STEP 2: Twin correlations at t1, t2 vs Null B
+        # STEP 2: Twin difference correlations at t1, t2 vs Null distribution of random-pair difference correlation
         # =====================================================
         rd_null = generate_random_shuffle(
             all_t1_t2,
@@ -595,7 +620,7 @@ def process_simulation(
                     row[f"zscore_twin_vs_random_{gi}_{gj}_t{t2}"] = zscore
 
         # =====================================================
-        # STEP 3: Directed cross-time correlations + self corr
+        # STEP 3 — Twin cross-correlations + null distribution of random-pair cross-correlations
         # =====================================================
         dc = directed_cross_time_with_pvals(
             twin1, twin2, t1, t2, gene_list,
@@ -777,7 +802,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=2024) 
     parser.add_argument("--start_index", type=int, default=0) 
     parser.add_argument("--mode", type=str, choices=["single", "pair"], default="single", help="Whether to process single simulations or random pairs (25k pairs).") 
-    parser.add_argument("--csv", type=str, default=None, help="Path to csv file containing the pairwise combinations.") 
+    parser.add_argument("--csv", type=str, default=None, help="Path to csv file containing the pairwise combinations of parameters to combine to form two state simulations.") 
+    parser.add_argument("--remove_twin_structure", type=zero_one_int, default=0, help="If true, random cells will be paired and considered as twins, thereby losing all twin information.") 
     args = parser.parse_args()
     path_to_simulations=args.path_to_simulations 
     output_folder=args.output 
@@ -792,6 +818,7 @@ if __name__ == "__main__":
     start_index=args.start_index 
     seed=args.seed 
     mode=args.mode 
+    remove_twin_structure = bool(args.remove_twin_structure)
     csv_path=args.csv
     run_pipeline( 
         path_to_simulations=path_to_simulations, 
@@ -807,4 +834,5 @@ if __name__ == "__main__":
         seed=seed, 
         start_index = start_index,
         mode=mode,
-        csv_path=csv_path)
+        csv_path=csv_path,
+        remove_twin_structure=remove_twin_structure)
